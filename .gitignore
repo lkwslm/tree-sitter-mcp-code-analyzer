@@ -37,11 +37,9 @@ wheels/
 MANIFEST
 
 # ========== 测试文件 ==========
-# 测试脚本
+# 测试脚本（但保留演示文件）
 test_*.py
 *_test.py
-test/
-tests/
 testing/
 
 # 特定测试文件
@@ -51,6 +49,12 @@ test_sse.py
 test_sse_fix.py
 performance_test.py
 benchmark_*.py
+
+# 保留演示文件夹
+!tests/
+!tests/demos/
+!tests/README.md
+!tests/demos/*.py
 
 # 测试输出和报告
 htmlcov/
