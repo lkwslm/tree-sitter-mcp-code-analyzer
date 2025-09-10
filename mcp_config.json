@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "tree-sitter-code-analyzer": {
+      "command": "python",
+      "args": ["mcp_server.py"],
+      "env": {
+        "PYTHONPATH": "src"
+      }
+    }
+  }
+}

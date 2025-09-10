@@ -1,0 +1,46 @@
+# 默认分析器配置文件
+# 可以根据需要修改这些设置
+
+input:
+  path: "."                          # 要分析的代码路径
+  language: "csharp"                 # 编程语言
+  file_extensions: ["cs"]            # 文件扩展名
+  exclude_patterns:                  # 排除的文件/目录模式
+    - "bin/"
+    - "obj/"
+    - "*.Test.cs"
+    - "*.Tests.cs"
+    - "*.Designer.cs"
+    - "AssemblyInfo.cs"
+  include_patterns: ["*.cs"]         # 包含的文件模式
+  recursive: true                    # 是否递归搜索子目录
+
+output:
+  directory: "./output"              # 输出目录
+  formats:                           # 输出格式
+    - "json"
+    - "llm_prompt"
+  json_file: "knowledge_graph.json"
+  llm_prompt_file: "llm_prompt.txt"
+
+parsing:
+  extract_comments: false            # 是否提取注释
+  extract_method_bodies: false       # 是否提取方法体
+  include_private_members: true      # 是否包含私有成员
+  include_generated_code: false      # 是否包含生成的代码
+  max_depth: -1                      # 最大解析深度（-1表示无限制）
+
+knowledge_graph:
+  include_inheritance: true          # 是否包含继承关系
+  include_method_calls: false        # 是否包含方法调用关系
+  include_type_usage: true           # 是否包含类型使用关系
+  include_namespaces: true           # 是否包含命名空间
+  merge_similar_nodes: false         # 是否合并相似节点
+  max_depth: "method"                # 最大解析深度: class, method, property
+  compress_members: true             # 压缩成员信息到方法级别（推荐）
+  include_method_operations: true    # 在方法中包含操作信息
+
+logging:
+  level: "INFO"                      # 日志级别: DEBUG, INFO, WARNING, ERROR
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: null                         # 日志文件路径（null表示不输出到文件）

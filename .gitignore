@@ -1,0 +1,198 @@
+# ===========================================
+# Tree-Sitter MCP 项目 .gitignore
+# 只保留发布版本相关文件
+# ===========================================
+
+# ========== Python 环境 ==========
+# 虚拟环境
+venv/
+venv310/
+env/
+ENV/
+.env
+.venv
+*.virtualenv
+
+# Python 缓存和编译文件
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ========== 测试文件 ==========
+# 测试脚本
+test_*.py
+*_test.py
+test/
+tests/
+testing/
+
+# 特定测试文件
+simple_http_test.py
+test_http_client.py
+test_sse.py
+test_sse_fix.py
+performance_test.py
+benchmark_*.py
+
+# 测试输出和报告
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# ========== 开发环境文件 ==========
+# IDE 配置
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 编辑器临时文件
+.DS_Store
+Thumbs.db
+.tmp
+.temp
+
+# ========== 日志和缓存文件 ==========
+# 应用日志
+*.log
+logs/
+log/
+
+# 分析缓存（用户缓存目录）
+.tree_sitter_cache/
+cache/
+.cache/
+
+# 临时输出文件
+output/
+temp/
+tmp/
+*.tmp
+
+# ========== 示例和演示文件 ==========
+# Web客户端（开发用）
+web_client.html
+web_client_sse.html
+
+# 启动脚本（开发用）
+start_*.bat
+start_*.sh
+run_*.bat
+run_*.sh
+
+# ========== 文档草稿 ==========
+# 开发文档
+DEVELOPMENT.md
+TODO.md
+NOTES.md
+CHANGELOG_DRAFT.md
+*_DRAFT.md
+*_WIP.md
+
+# API文档（开发版）
+HTTP_SERVER_GUIDE.md
+SSE_GUIDE.md
+SSE_FIX_SUMMARY.md
+RESTFUL_API_DOCS.md
+
+# ========== 配置文件 ==========
+# 本地配置
+config.local.json
+settings.local.json
+.env.local
+.env.development
+
+# 数据库文件
+*.db
+*.sqlite
+*.sqlite3
+
+# ========== 系统文件 ==========
+# Windows
+desktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+
+# ========== 特定项目文件 ==========
+# 示例项目路径（避免意外提交大型项目）
+shadowsocks-*/
+example-projects/
+sample-code/
+
+# 分析结果文件
+analysis_*.json
+knowledge_graph_*.json
+detailed_index_*.json
+
+# 性能分析文件
+*.prof
+*.profile
+
+# ========== 发布准备文件 ==========
+# 版本构建文件
+build_release.py
+package.py
+deploy/
+release/
+
+# 压缩包
+*.zip
+*.tar.gz
+*.7z
+
+# ========== 保留文件说明 ==========
+# 以下文件将被保留用于发布版本：
+# - src/                     (核心源代码)
+# - requirements.txt         (依赖列表)
+# - README.md               (项目说明)
+# - LICENSE                 (许可证)
+# - setup.py               (安装脚本，如果有)
+# - mcp_server.py          (MCP服务器主文件)
+# - mcp_http_server.py     (HTTP服务器主文件)
+# - ARCHITECTURE.md        (架构文档)
+# - API_DOCUMENTATION.md   (正式API文档)
+# - INSTALLATION.md        (安装指南)
+# - USER_GUIDE.md         (用户指南)
+
+# ========== 强制包含 ==========
+# 确保重要文件不被忽略
+!README.md
+!LICENSE
+!requirements.txt
+!setup.py
+!src/
+!mcp_server.py
+!mcp_http_server.py
