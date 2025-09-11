@@ -90,7 +90,6 @@ log/
 
 # 分析缓存（用户缓存目录）
 .tree_sitter_cache/
-cache/
 .cache/
 
 # 临时输出文件
@@ -200,3 +199,4 @@ release/
 !src/
 !mcp_server.py
 !mcp_http_server.py
+!src.cache/
