@@ -49,6 +49,24 @@ pip install -r requirements.txt
 
 ## 🚀 使用方法
 
+### 在cline中使用
+```json
+{
+  "mcpServers": {
+    "tree-sitter-code-analyzer": {
+      "autoApprove": [],
+      "disabled": false,
+      "timeout": 60,
+      "type": "stdio",
+      "command": "python",
+      "args": [
+        "your path/tree-sitter-mcp-code-analyzer/mcp_server.py"
+      ]
+    }
+}
+```
+
+
 ### 命令行模式
 ```bash
 python main.py --input <代码文件或目录> --output <输出目录> --language csharp
