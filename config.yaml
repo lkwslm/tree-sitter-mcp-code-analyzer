@@ -40,6 +40,30 @@ knowledge_graph:
   compress_members: true             # 压缩成员信息到方法级别（推荐）
   include_method_operations: true    # 在方法中包含操作信息
 
+# 依赖图查询配置
+dependency_analysis:
+  default_depth: 2                   # 默认查询深度（k层）
+  max_depth: 5                       # 最大允许的查询深度
+  default_direction: "both"          # 默认查询方向: in, out, both
+  max_nodes_in_result: 100           # 结果中最大节点数量
+  enable_cycle_detection: true       # 是否启用循环依赖检测
+  include_layer_info: true           # 是否在结果中包含层级信息
+  include_centrality_score: true     # 是否包含中心性分数
+  
+  # 多层级分析配置
+  multi_level_analysis:
+    enable_namespace_analysis: true   # 是否启用命名空间级别分析
+    enable_class_analysis: true       # 是否启用类级别分析
+    enable_method_analysis: true      # 是否启用方法级别分析
+    default_include_methods: false    # 类分析默认是否包含方法
+    max_cross_level_relationships: 50 # 跨层级关系的最大数量
+    
+  # 各层级的默认深度配置
+  level_specific_depths:
+    namespace_depth: 2                # 命名空间分析默认深度
+    class_depth: 2                    # 类分析默认深度
+    method_depth: 2                   # 方法分析默认深度
+
 logging:
   level: "INFO"                      # 日志级别: DEBUG, INFO, WARNING, ERROR
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

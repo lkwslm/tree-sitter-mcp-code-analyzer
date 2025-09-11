@@ -3,17 +3,33 @@ MCP工具接口
 为LLM提供按需查询详细代码信息的工具
 """
 import json
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Union
 from pathlib import Path
 import logging
+
+# 导入依赖图计算模块
+try:
+    from .dependency_graph import DependencyGraphComputer
+except ImportError:
+    DependencyGraphComputer = None
 
 class MCPCodeTools:
     """MCP代码查询工具集"""
     
-    def __init__(self, kg_file_path: str = None, detailed_index: Dict[str, Any] = None):
+    def __init__(self, kg_file_path: str = None, detailed_index: Dict[str, Any] = None, config=None):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.kg_data = None
         self.detailed_index = detailed_index or {}
+        self.config = config
+        self.dependency_computer = None
+        
+        # 初始化依赖图计算器
+        if DependencyGraphComputer:
+            try:
+                self.dependency_computer = DependencyGraphComputer(config)
+                self.logger.info("依赖图计算器初始化成功")
+            except Exception as e:
+                self.logger.warning(f"依赖图计算器初始化失败: {e}")
         
         if kg_file_path:
             self.load_knowledge_graph(kg_file_path)
@@ -24,6 +40,12 @@ class MCPCodeTools:
             with open(kg_file_path, 'r', encoding='utf-8') as f:
                 self.kg_data = json.load(f)
             self.logger.info(f"已加载知识图谱: {kg_file_path}")
+            
+            # 初始化依赖图
+            if self.dependency_computer and self.kg_data:
+                self.dependency_computer.build_dependency_graph(self.kg_data)
+                self.logger.info("依赖图构建完成")
+                
         except Exception as e:
             self.logger.error(f"加载知识图谱失败: {e}")
     
@@ -331,6 +353,449 @@ class MCPCodeTools:
             'usage_suggestions': self._generate_method_usage_suggestions(method)
         }
     
+    def analyze_dependencies(self, 
+                           target_methods: Union[str, List[str]], 
+                           depth: int = None, 
+                           direction: str = None) -> Dict[str, Any]:
+        """
+        分析方法的依赖关系（MCP工具）
+        
+        Args:
+            target_methods: 目标方法名或方法名列表
+            depth: 依赖深度（k层），不指定则使用配置默认值
+            direction: 依赖方向（'in', 'out', 'both'），不指定则使用配置默认值
+            
+        Returns:
+            依赖分析结果，包含局部子图和统计信息
+        """
+        if not self.dependency_computer:
+            return {'error': '依赖图计算器未初始化，请检查networkx依赖'}
+        
+        if not self.kg_data:
+            return {'error': '知识图谱数据未加载'}
+        
+        # 使用配置中的默认值
+        if depth is None:
+            depth = self._get_config_value('dependency_analysis.default_depth', 2)
+        
+        if direction is None:
+            direction = self._get_config_value('dependency_analysis.default_direction', 'both')
+        
+        # 验证参数
+        max_depth = self._get_config_value('dependency_analysis.max_depth', 5)
+        if depth > max_depth:
+            return {'error': f'深度{depth}超过最大允许值{max_depth}'}
+        
+        if direction not in ['in', 'out', 'both']:
+            return {'error': f'无效的方向参数: {direction}，必须是 in/out/both 之一'}
+        
+        try:
+            # 查找目标方法对应的节点ID
+            target_node_ids = self._find_method_node_ids(target_methods)
+            
+            if not target_node_ids:
+                return {
+                    'error': f'未找到目标方法: {target_methods}',
+                    'available_methods': self._get_available_methods_list()
+                }
+            
+            # 进行依赖分析
+            result = self.dependency_computer.find_k_hop_dependencies(
+                target_node_ids, depth, direction
+            )
+            
+            # 添加更多信息
+            result['query_info'] = {
+                'target_methods': target_methods,
+                'depth': depth,
+                'direction': direction,
+                'found_target_nodes': len(target_node_ids)
+            }
+            
+            # 限制返回结果大小
+            max_nodes = self._get_config_value('dependency_analysis.max_nodes_in_result', 100)
+            if len(result['nodes']) > max_nodes:
+                result['nodes'] = result['nodes'][:max_nodes]
+                result['truncated'] = True
+                result['total_nodes_found'] = len(result['nodes'])
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"依赖分析失败: {e}")
+            return {'error': f'依赖分析失败: {str(e)}'}
+    
+    def get_dependency_report(self, 
+                            target_methods: Union[str, List[str]], 
+                            depth: int = None) -> Dict[str, Any]:
+        """
+        生成依赖关系分析报告（MCP工具）
+        
+        Args:
+            target_methods: 目标方法名或方法名列表
+            depth: 依赖深度（k层），不指定则使用配置默认值
+            
+        Returns:
+            包含报告文本和统计信息的字典
+        """
+        if not self.dependency_computer:
+            return {'error': '依赖图计算器未初始化，请检查networkx依赖'}
+        
+        if not self.kg_data:
+            return {'error': '知识图谱数据未加载'}
+        
+        # 使用配置中的默认值
+        if depth is None:
+            depth = self._get_config_value('dependency_analysis.default_depth', 2)
+        
+        try:
+            # 查找目标方法对应的节点ID
+            target_node_ids = self._find_method_node_ids(target_methods)
+            
+            if not target_node_ids:
+                return {
+                    'error': f'未找到目标方法: {target_methods}',
+                    'available_methods': self._get_available_methods_list()
+                }
+            
+            # 生成报告
+            report_text = self.dependency_computer.generate_dependency_report(
+                target_node_ids, depth
+            )
+            
+            return {
+                'target_methods': target_methods,
+                'depth': depth,
+                'report': report_text,
+                'report_length': len(report_text),
+                'found_target_nodes': len(target_node_ids)
+            }
+            
+        except Exception as e:
+            self.logger.error(f"生成依赖报告失败: {e}")
+            return {'error': f'生成依赖报告失败: {str(e)}'}
+    
+    def list_available_methods(self, limit: int = 50) -> Dict[str, Any]:
+        """
+        列出所有可用的方法（MCP工具）
+        
+        Args:
+            limit: 返回结果数量限制
+            
+        Returns:
+            可用方法列表
+        """
+        if not self.kg_data:
+            return {'error': '知识图谱数据未加载'}
+        
+        methods = []
+        
+        # 从知识图谱中提取方法
+        for node in self.kg_data.get('nodes', []):
+            # 直接的方法节点
+            if node['type'] == 'method':
+                methods.append({
+                    'name': node['name'],
+                    'type': 'method',
+                    'context': self._extract_context_from_node_id(node.get('id', '')),
+                    'node_id': node.get('id', '')
+                })
+            
+            # 压缩模式下的方法（在类的member_summary中）
+            elif node['type'] in ['class', 'interface'] and 'metadata' in node:
+                member_summary = node['metadata'].get('member_summary', {})
+                class_name = node['name']
+                
+                for method in member_summary.get('methods', []):
+                    methods.append({
+                        'name': method['name'],
+                        'type': 'method',
+                        'context': f'所在类: {class_name}',
+                        'class': class_name,
+                        'signature': self._build_method_signature(method),
+                        'operations': method.get('operations', [])
+                    })
+        
+        # 去重并排序
+        unique_methods = {}
+        for method in methods:
+            key = f"{method.get('class', '')}.{method['name']}"
+            if key not in unique_methods:
+                unique_methods[key] = method
+        
+        method_list = list(unique_methods.values())
+        method_list.sort(key=lambda x: x['name'])
+        
+        return {
+            'total_methods': len(method_list),
+            'methods': method_list[:limit],
+            'truncated': len(method_list) > limit
+        }
+    
+    def analyze_namespace_dependencies(self, 
+                                     target_namespaces: Union[str, List[str]], 
+                                     depth: int = None, 
+                                     direction: str = None) -> Dict[str, Any]:
+        """
+        分析命名空间的依赖关系（MCP工具）
+        
+        Args:
+            target_namespaces: 目标命名空间名或名称列表
+            depth: 依赖深度（k层），不指定则使用配置默认值
+            direction: 依赖方向（'in', 'out', 'both'），不指定则使用配置默认值
+            
+        Returns:
+            命名空间级别的依赖分析结果
+        """
+        if not self.dependency_computer:
+            return {'error': '依赖图计算器未初始化，请检查networkx依赖'}
+        
+        if not self.kg_data:
+            return {'error': '知识图谱数据未加载'}
+        
+        # 使用配置中的默认值
+        if depth is None:
+            depth = self._get_config_value('dependency_analysis.default_depth', 2)
+        
+        if direction is None:
+            direction = self._get_config_value('dependency_analysis.default_direction', 'both')
+        
+        # 验证参数
+        max_depth = self._get_config_value('dependency_analysis.max_depth', 5)
+        if depth > max_depth:
+            return {'error': f'深度{depth}超过最大允许值{max_depth}'}
+        
+        if direction not in ['in', 'out', 'both']:
+            return {'error': f'无效的方向参数: {direction}，必须是 in/out/both 之一'}
+        
+        try:
+            # 进行命名空间级别的依赖分析
+            result = self.dependency_computer.find_namespace_dependencies(
+                target_namespaces, depth, direction
+            )
+            
+            # 添加查询信息
+            result['query_info'] = {
+                'target_namespaces': target_namespaces,
+                'depth': depth,
+                'direction': direction,
+                'analysis_level': 'namespace'
+            }
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"命名空间依赖分析失败: {e}")
+            return {'error': f'命名空间依赖分析失败: {str(e)}'}
+    
+    def analyze_class_dependencies(self, 
+                                 target_classes: Union[str, List[str]], 
+                                 depth: int = None, 
+                                 direction: str = None,
+                                 include_methods: bool = False) -> Dict[str, Any]:
+        """
+        分析类的依赖关系（MCP工具）
+        
+        Args:
+            target_classes: 目标类名或类名列表
+            depth: 依赖深度（k层），不指定则使用配置默认值
+            direction: 依赖方向（'in', 'out', 'both'），不指定则使用配置默认值
+            include_methods: 是否包含方法级别的依赖
+            
+        Returns:
+            类级别的依赖分析结果
+        """
+        if not self.dependency_computer:
+            return {'error': '依赖图计算器未初始化，请检查networkx依赖'}
+        
+        if not self.kg_data:
+            return {'error': '知识图谱数据未加载'}
+        
+        # 使用配置中的默认值
+        if depth is None:
+            depth = self._get_config_value('dependency_analysis.default_depth', 2)
+        
+        if direction is None:
+            direction = self._get_config_value('dependency_analysis.default_direction', 'both')
+        
+        # 验证参数
+        max_depth = self._get_config_value('dependency_analysis.max_depth', 5)
+        if depth > max_depth:
+            return {'error': f'深度{depth}超过最大允许值{max_depth}'}
+        
+        if direction not in ['in', 'out', 'both']:
+            return {'error': f'无效的方向参数: {direction}，必须是 in/out/both 之一'}
+        
+        try:
+            # 进行类级别的依赖分析
+            result = self.dependency_computer.find_class_dependencies(
+                target_classes, depth, direction, include_methods
+            )
+            
+            # 添加查询信息
+            result['query_info'] = {
+                'target_classes': target_classes,
+                'depth': depth,
+                'direction': direction,
+                'analysis_level': 'class',
+                'include_methods': include_methods
+            }
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"类依赖分析失败: {e}")
+            return {'error': f'类依赖分析失败: {str(e)}'}
+    
+    def analyze_multi_level_dependencies(self, 
+                                       targets: Dict[str, List[str]], 
+                                       depth: int = None, 
+                                       direction: str = None) -> Dict[str, Any]:
+        """
+        同时分析多个层级的依赖关系（MCP工具）
+        
+        Args:
+            targets: 目标字典，格式为 {
+                'namespaces': ['命名空间列表'],
+                'classes': ['类列表'],
+                'methods': ['方法列表']
+            }
+            depth: 依赖深度（k层），不指定则使用配置默认值
+            direction: 依赖方向（'in', 'out', 'both'），不指定则使用配置默认值
+            
+        Returns:
+            多层级的依赖分析结果
+        """
+        if not self.dependency_computer:
+            return {'error': '依赖图计算器未初始化，请检查networkx依赖'}
+        
+        if not self.kg_data:
+            return {'error': '知识图谱数据未加载'}
+        
+        # 验证targets参数
+        if not targets or not isinstance(targets, dict):
+            return {'error': 'targets参数必须是包含目标层级的字典'}
+        
+        valid_levels = ['namespaces', 'classes', 'methods']
+        for level in targets.keys():
+            if level not in valid_levels:
+                return {'error': f'无效的层级: {level}，必须是 {valid_levels} 之一'}
+        
+        # 使用配置中的默认值
+        if depth is None:
+            depth = self._get_config_value('dependency_analysis.default_depth', 2)
+        
+        if direction is None:
+            direction = self._get_config_value('dependency_analysis.default_direction', 'both')
+        
+        # 验证参数
+        max_depth = self._get_config_value('dependency_analysis.max_depth', 5)
+        if depth > max_depth:
+            return {'error': f'深度{depth}超过最大允许值{max_depth}'}
+        
+        if direction not in ['in', 'out', 'both']:
+            return {'error': f'无效的方向参数: {direction}，必须是 in/out/both 之一'}
+        
+        try:
+            # 进行多层级的依赖分析
+            result = self.dependency_computer.find_multi_level_dependencies(
+                targets, depth, direction
+            )
+            
+            # 添加查询信息
+            result['query_info'] = {
+                'targets': targets,
+                'depth': depth,
+                'direction': direction,
+                'analysis_level': 'multi_level'
+            }
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"多层级依赖分析失败: {e}")
+            return {'error': f'多层级依赖分析失败: {str(e)}'}
+    
+    def list_available_namespaces(self) -> Dict[str, Any]:
+        """
+        列出所有可用的命名空间（MCP工具）
+        
+        Returns:
+            可用命名空间列表
+        """
+        if not self.kg_data:
+            return {'error': '知识图谱数据未加载'}
+        
+        namespaces = []
+        
+        for node in self.kg_data.get('nodes', []):
+            if node['type'] == 'namespace':
+                namespaces.append({
+                    'name': node['name'],
+                    'id': node.get('id', ''),
+                    'full_path': node.get('metadata', {}).get('full_path', ''),
+                    'children_count': len(node.get('children', []))
+                })
+        
+        # 去重并排序
+        unique_namespaces = {ns['name']: ns for ns in namespaces}
+        namespace_list = list(unique_namespaces.values())
+        namespace_list.sort(key=lambda x: x['name'])
+        
+        return {
+            'total_namespaces': len(namespace_list),
+            'namespaces': namespace_list
+        }
+    
+    def list_available_classes(self, namespace_filter: str = None) -> Dict[str, Any]:
+        """
+        列出所有可用的类（MCP工具）
+        
+        Args:
+            namespace_filter: 命名空间过滤器，只返回指定命名空间下的类
+            
+        Returns:
+            可用类列表
+        """
+        if not self.kg_data:
+            return {'error': '知识图谱数据未加载'}
+        
+        classes = []
+        
+        for node in self.kg_data.get('nodes', []):
+            if node['type'] in ['class', 'interface', 'struct', 'enum']:
+                # 提取命名空间信息
+                node_namespace = self._extract_namespace_from_node_id(node.get('id', ''))
+                
+                # 应用命名空间过滤
+                if namespace_filter and node_namespace != namespace_filter:
+                    continue
+                
+                class_info = {
+                    'name': node['name'],
+                    'type': node['type'],
+                    'id': node.get('id', ''),
+                    'namespace': node_namespace or '未知',
+                    'modifiers': node.get('metadata', {}).get('modifiers', []),
+                    'member_counts': node.get('metadata', {}).get('member_counts', {})
+                }
+                
+                # 添加继承信息
+                base_types = node.get('metadata', {}).get('base_types', [])
+                if base_types:
+                    class_info['base_types'] = base_types
+                
+                classes.append(class_info)
+        
+        # 排序
+        classes.sort(key=lambda x: (x['namespace'], x['name']))
+        
+        return {
+            'total_classes': len(classes),
+            'classes': classes,
+            'namespace_filter': namespace_filter
+        }
+    
     # ========== 辅助方法 ==========
     
     def _build_method_signature(self, method: Dict[str, Any]) -> str:
@@ -405,6 +870,91 @@ class MCPCodeTools:
             suggestions.append("静态方法，可以直接通过类名调用")
         
         return suggestions
+    
+    def _get_config_value(self, key: str, default_value: Any) -> Any:
+        """获取配置值"""
+        if not self.config:
+            return default_value
+        
+        # 使用config的get方法
+        try:
+            return self.config.get(key, default_value)
+        except Exception:
+            return default_value
+    
+    def _find_method_node_ids(self, target_methods: Union[str, List[str]]) -> List[str]:
+        """查找目标方法对应的节点ID"""
+        if isinstance(target_methods, str):
+            target_methods = [target_methods]
+        
+        target_node_ids = []
+        
+        for node in self.kg_data.get('nodes', []):
+            node_name = node.get('name', '')
+            node_type = node.get('type', '')
+            node_id = node.get('id', '')
+            
+            # 直接匹配方法名
+            if node_name in target_methods and node_type == 'method':
+                target_node_ids.append(node_id)
+                continue
+            
+            # 匹配压缩模式下的成员方法
+            if node_type in ['class', 'interface'] and 'metadata' in node:
+                member_summary = node.get('metadata', {}).get('member_summary', {})
+                methods = member_summary.get('methods', [])
+                
+                for method in methods:
+                    if method.get('name') in target_methods:
+                        # 对于压缩模式，返回类节点ID
+                        target_node_ids.append(node_id)
+                        break
+        
+        return target_node_ids
+    
+    def _get_available_methods_list(self) -> List[str]:
+        """获取可用方法列表"""
+        methods = []
+        
+        for node in self.kg_data.get('nodes', []):
+            if node['type'] == 'method':
+                methods.append(node['name'])
+            elif node['type'] in ['class', 'interface'] and 'metadata' in node:
+                member_summary = node.get('metadata', {}).get('member_summary', {})
+                for method in member_summary.get('methods', []):
+                    methods.append(method['name'])
+        
+        return list(set(methods))  # 去重
+    
+    def _extract_context_from_node_id(self, node_id: str) -> str:
+        """从节点ID中提取上下文信息"""
+        if not node_id or '.' not in node_id:
+            return '未知上下文'
+        
+        parts = node_id.split('.')
+        if len(parts) > 1:
+            return '.'.join(parts[:-1])  # 移除最后一部分（当前方法名）
+        
+        return '未知上下文'
+    
+    def _extract_namespace_from_node_id(self, node_id: str) -> Optional[str]:
+        """从节点ID中提取命名空间信息"""
+        if not node_id or '.' not in node_id:
+            return None
+        
+        parts = node_id.split('.')
+        if len(parts) >= 2:
+            # 简化逻辑：假设前几部分是命名空间
+            potential_ns = '.'.join(parts[:-1])
+            
+            # 验证是否存在对应的命名空间节点
+            for node in self.kg_data.get('nodes', []):
+                if (node.get('type') == 'namespace' and 
+                    (node.get('id', '').endswith(potential_ns) or 
+                     potential_ns in node.get('name', ''))):
+                    return node.get('name')
+        
+        return None
     
     def _analyze_namespace_hierarchy(self) -> Dict[str, Any]:
         """分析命名空间层次结构"""

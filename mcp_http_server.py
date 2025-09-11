@@ -385,12 +385,12 @@ class TreeSitterMCPHTTPServer:
             file_extensions = language_extensions.get(language, ['cs'])
             
             # 检查缓存
-            logger.info(f"🔍 检查项目缓存: {project_path}")
+            logger.info(f"检查项目缓存: {project_path}")
             has_changed = self.cache_manager.has_project_changed(project_path, language, file_extensions)
             
             if not has_changed:
                 # 使用缓存
-                logger.info("🚀 使用缓存数据")
+                logger.info("使用缓存数据")
                 cached_data = self.cache_manager.load_project_cache(project_path, language)
                 
                 if cached_data:
@@ -420,7 +420,7 @@ class TreeSitterMCPHTTPServer:
                     navigation = summaries.get('navigation', '导航索引生成完成')
                     
                     return {
-                        "text": f"""# 🚀 项目分析完成！（使用缓存）
+                        "text": f"""项目分析完成！（使用缓存）
 
 {overview}
 
@@ -428,18 +428,18 @@ class TreeSitterMCPHTTPServer:
 
 {navigation}
 
-## 📊 分析统计
+分析统计
 - 总节点数: {self.kg_data.get('statistics', {}).get('total_nodes', 0)}
 - 总关系数: {self.kg_data.get('statistics', {}).get('total_relationships', 0)}
 - 项目路径: {project_path}
 - 压缩模式: {'启用' if compress else '禁用'}
 
-## 💾 缓存信息
+缓存信息
 - 缓存时间: {cached_time}
 - 文件数量: {file_count}
-- 缓存状态: ✅ 有效
+- 缓存状态: 有效
 
-🎯 **现在可以使用API工具进行详细查询了！**
+现在可以使用API工具进行详细查询了！
 """,
                         "cached": True,
                         "cache_time": cached_time,
@@ -509,17 +509,17 @@ class TreeSitterMCPHTTPServer:
 
 {navigation}
 
-## 📊 分析统计
+分析统计
 - 总节点数: {stats['total_nodes']}
 - 总关系数: {stats['total_relationships']}
 - 项目路径: {project_path}
 - 压缩模式: {'启用' if compress else '禁用'}
 
-## 💾 缓存信息
-- 缓存状态: ✅ 已保存
+缓存信息
+- 缓存状态: 已保存
 - 下次分析将使用缓存（除非文件发生变化）
 
-🎯 **现在可以使用API工具进行详细查询了！**
+现在可以使用API工具进行详细查询了！
 """,
                     "cached": False,
                     "statistics": stats
@@ -537,11 +537,11 @@ class TreeSitterMCPHTTPServer:
         stats = self.kg_data.get('statistics', {})
         node_types = stats.get('node_types', {})
         
-        overview_text = f"""# 📋 项目概览
+        overview_text = f"""项目概览
 
 **项目路径**: {self.current_project_path or '未知'}
 
-## 📊 代码统计
+代码统计
 """
         
         for node_type, count in node_types.items():
@@ -686,11 +686,11 @@ class TreeSitterMCPHTTPServer:
             if project_path:
                 # 清除特定项目缓存
                 self.cache_manager.clear_cache(project_path, language)
-                message = f"🗑️ 已清除项目缓存: {project_path}"
+                message = f"已清除项目缓存: {project_path}"
             else:
                 # 清除所有缓存
                 self.cache_manager.clear_cache()
-                message = "🗑️ 已清除所有缓存"
+                message = "已清除所有缓存"
             
             return {"message": message, "success": True}
             
@@ -718,11 +718,11 @@ def create_app() -> FastAPI:
 def main():
     """HTTP服务器主入口"""
     if not HTTP_AVAILABLE:
-        print("❌ FastAPI和Uvicorn未安装")
-        print("📦 安装方法: pip install fastapi uvicorn")
+        print("FastAPI和Uvicorn未安装")
+        print("安装方法: pip install fastapi uvicorn")
         return
     
-    print("🚀 启动Tree-Sitter MCP HTTP服务器...")
+    print("启动Tree-Sitter MCP HTTP服务器...")
     
     try:
         server = TreeSitterMCPHTTPServer()
@@ -738,7 +738,7 @@ def main():
         
     except Exception as e:
         logger.error(f"服务器启动失败: {e}")
-        print(f"❌ 服务器启动失败: {e}")
+        print(f"服务器启动失败: {e}")
 
 if __name__ == "__main__":
     main()

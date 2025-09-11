@@ -92,6 +92,10 @@ log/
 .tree_sitter_cache/
 .cache/
 
+# NetworkX图计算相关的临时文件
+*.gexf
+*.graphml
+
 # 临时输出文件
 output/
 temp/

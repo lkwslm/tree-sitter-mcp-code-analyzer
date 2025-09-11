@@ -3,7 +3,7 @@
 将解析后的代码结构转换为适合LLM理解的知识图谱
 """
 import json
-from typing import Dict, List, Any, Optional, Set, Tuple
+from typing import Dict, List, Any, Optional, Set, Tuple, Union
 from pathlib import Path
 import sys
 import logging
@@ -11,6 +11,12 @@ import logging
 # 添加核心模块路径
 sys.path.append(str(Path(__file__).parent.parent))
 from core.base_parser import CodeNode
+
+# 导入图计算模块
+try:
+    from .dependency_graph import DependencyGraphComputer
+except ImportError:
+    DependencyGraphComputer = None
 
 class KnowledgeGraph:
     """知识图谱类"""
@@ -72,6 +78,17 @@ class KnowledgeGraphGenerator:
     def __init__(self, config=None):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.config = config
+        self.dependency_computer = None
+        
+        # 初始化依赖图计算器
+        if DependencyGraphComputer:
+            try:
+                self.dependency_computer = DependencyGraphComputer(config)
+                self.logger.info("依赖图计算器初始化成功")
+            except Exception as e:
+                self.logger.warning(f"依赖图计算器初始化失败: {e}")
+        else:
+            self.logger.warning("未找到networkx，依赖图计算功能不可用")
     
     def generate_from_code_nodes(self, code_nodes: List[CodeNode]) -> KnowledgeGraph:
         """从代码节点列表生成知识图谱"""
@@ -500,6 +517,99 @@ class KnowledgeGraphGenerator:
             self.logger.info(f"知识图谱已保存到: {output_path}")
         except Exception as e:
             self.logger.error(f"保存知识图谱失败: {e}")
+    
+    def generate_contextual_subgraph(self, 
+                                    kg: KnowledgeGraph, 
+                                    target_functions: Union[str, List[str]], 
+                                    k: int = 2,
+                                    direction: str = 'both') -> Dict[str, Any]:
+        """
+        生成围绕目标函数的k层依赖子图
+        
+        Args:
+            kg: 知识图谱对象
+            target_functions: 目标函数名或函数名列表
+            k: 依赖层数，默认为2
+            direction: 依赖方向 ('in', 'out', 'both')
+        
+        Returns:
+            压缩后的子图数据
+        """
+        if not self.dependency_computer:
+            self.logger.error("依赖图计算器未初始化，无法生成上下文子图")
+            return kg.to_dict()
+        
+        # 构建依赖图
+        kg_data = kg.to_dict()
+        dependency_graph = self.dependency_computer.build_dependency_graph(kg_data)
+        
+        # 查找目标函数对应的节点ID
+        target_node_ids = self._find_function_node_ids(kg_data, target_functions)
+        
+        if not target_node_ids:
+            self.logger.warning(f"未找到目标函数: {target_functions}")
+            return kg.to_dict()
+        
+        # 查找依赖关系
+        subgraph_data = self.dependency_computer.find_k_hop_dependencies(
+            target_node_ids, k, direction
+        )
+        
+        self.logger.info(f"已生成围绕 {len(target_node_ids)} 个目标函数的 {k} 层依赖子图")
+        self.logger.info(f"子图统计: {subgraph_data['statistics']['total_nodes']} 个节点, "
+                        f"{subgraph_data['statistics']['total_edges']} 个关系")
+        self.logger.info(f"压缩比例: {subgraph_data['statistics']['compression_ratio']:.2%}")
+        
+        return subgraph_data
+    
+    def _find_function_node_ids(self, kg_data: Dict[str, Any], target_functions: Union[str, List[str]]) -> List[str]:
+        """查找目标函数对应的节点ID"""
+        if isinstance(target_functions, str):
+            target_functions = [target_functions]
+        
+        target_node_ids = []
+        
+        for node in kg_data.get('nodes', []):
+            node_name = node.get('name', '')
+            node_type = node.get('type', '')
+            node_id = node.get('id', '')
+            
+            # 直接匹配函数名
+            if node_name in target_functions and node_type == 'method':
+                target_node_ids.append(node_id)
+                continue
+            
+            # 匹配压缩模式下的成员方法
+            member_summary = node.get('metadata', {}).get('member_summary', {})
+            methods = member_summary.get('methods', [])
+            
+            for method in methods:
+                if method.get('name') in target_functions:
+                    # 对于压缩模式，返回类节点ID
+                    target_node_ids.append(node_id)
+                    break
+        
+        return target_node_ids
+    
+    def generate_dependency_report(self, 
+                                 kg: KnowledgeGraph, 
+                                 target_functions: Union[str, List[str]], 
+                                 k: int = 2) -> str:
+        """生成依赖关系报告"""
+        if not self.dependency_computer:
+            return "依赖图计算器未初始化，无法生成报告"
+        
+        # 构建依赖图
+        kg_data = kg.to_dict()
+        self.dependency_computer.build_dependency_graph(kg_data)
+        
+        # 查找目标函数
+        target_node_ids = self._find_function_node_ids(kg_data, target_functions)
+        
+        if not target_node_ids:
+            return f"未找到目标函数: {target_functions}"
+        
+        return self.dependency_computer.generate_dependency_report(target_node_ids, k)
     
     def generate_llm_prompt(self, kg: KnowledgeGraph) -> str:
         """生成适合LLM理解的提示文本"""

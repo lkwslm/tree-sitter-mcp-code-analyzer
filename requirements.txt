@@ -1,28 +1,23 @@
-# Tree-Sitter MCP服务器依赖包
-# Python 3.10+ 必需
+# Tree-Sitter MCP Server Dependencies
+# Python 3.10+ Required
 
-# 核心解析依赖
+# Core parsing dependencies
 tree-sitter==0.21.3
 tree-sitter-c-sharp==0.21.0
 
-# 配置和工具
+# Configuration and tools
 pyyaml==6.0.1
 colorlog==6.8.0
 json5==0.9.14
 
-# MCP协议支持
+# MCP protocol support
 mcp==1.0.0
 anyio==4.0.0
 
-# HTTP服务器支持（可选）
+# HTTP server support (optional)
 fastapi==0.104.1
 uvicorn==0.24.0
 typing-extensions==4.8.0
 
-# MCP协议支持
-mcp==1.0.0
-anyio==4.0.0
-
-# 可选依赖（用于扩展功能）
-# fastapi==0.104.1
-# uvicorn==0.24.0
+# Graph computing dependencies
+networkx==3.2.1

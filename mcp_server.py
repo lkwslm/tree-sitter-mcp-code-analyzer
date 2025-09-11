@@ -336,12 +336,12 @@ class TreeSitterMCPServer:
             file_extensions = language_extensions.get(language, ['cs'])
             
             # 检查缓存
-            logger.info(f"🔍 检查项目缓存: {project_path}")
+            logger.info(f"检查项目缓存: {project_path}")
             has_changed = self.cache_manager.has_project_changed(project_path, language, file_extensions)
             
             if not has_changed:
                 # 使用缓存
-                logger.info("🚀 使用缓存数据")
+                logger.info("使用缓存数据")
                 cached_data = self.cache_manager.load_project_cache(project_path, language)
                 
                 if cached_data:
@@ -370,7 +370,7 @@ class TreeSitterMCPServer:
                     overview = summaries.get('overview', '项目分析完成')
                     navigation = summaries.get('navigation', '导航索引生成完成')
                     
-                    response = f"""# 🚀 项目分析完成！（使用缓存）
+                    response = f"""项目分析完成！（使用缓存）
 
 {overview}
 
@@ -378,24 +378,24 @@ class TreeSitterMCPServer:
 
 {navigation}
 
-## 📊 分析统计
+分析统计
 - 总节点数: {self.kg_data.get('statistics', {}).get('total_nodes', 0)}
 - 总关系数: {self.kg_data.get('statistics', {}).get('total_relationships', 0)}
 - 项目路径: {project_path}
 - 压缩模式: {'启用' if compress else '禁用'}
 
-## 💾 缓存信息
+缓存信息
 - 缓存时间: {cached_time}
 - 文件数量: {file_count}
-- 缓存状态: ✅ 有效
+- 缓存状态: 有效
 
-🎯 **现在可以使用上述工具进行详细查询了！**
+现在可以使用上述工具进行详细查询了！
 """
                     
                     return [TextContent(type="text", text=response)]
             
             # 需要重新分析
-            logger.info("🔄 项目已改变，重新分析...")
+            logger.info("项目已改变，重新分析...")
             
             # 配置分析器
             config = AnalyzerConfig()
@@ -436,7 +436,7 @@ class TreeSitterMCPServer:
                 self.mcp_tools.set_detailed_index(self.detailed_index)
                 
                 # 保存到缓存
-                logger.info("💾 保存分析结果到缓存...")
+                logger.info("保存分析结果到缓存...")
                 self.cache_manager.save_project_cache(
                     project_path, language, file_extensions, 
                     self.kg_data, self.detailed_index
@@ -448,7 +448,7 @@ class TreeSitterMCPServer:
                 
                 stats = result['statistics']
                 
-                response = f"""# 项目分析完成！
+                response = f"""项目分析完成！
 
 {overview}
 
@@ -456,17 +456,17 @@ class TreeSitterMCPServer:
 
 {navigation}
 
-## 📊 分析统计
+分析统计
 - 总节点数: {stats['total_nodes']}
 - 总关系数: {stats['total_relationships']}
 - 项目路径: {project_path}
 - 压缩模式: {'启用' if compress else '禁用'}
 
-## 💾 缓存信息
-- 缓存状态: ✅ 已保存
+缓存信息
+- 缓存状态: 已保存
 - 下次分析将使用缓存（除非文件发生变化）
 
-🎯 **现在可以使用上述工具进行详细查询了！**
+现在可以使用上述工具进行详细查询了！
 """
                 
                 return [TextContent(type="text", text=response)]
@@ -477,16 +477,16 @@ class TreeSitterMCPServer:
     async def _get_project_overview(self, args: Dict[str, Any]) -> Sequence[TextContent]:
         """获取项目概览"""
         if not self.kg_data:
-            return [TextContent(type="text", text="❌ 请先使用 analyze_project 工具分析项目")]
+            return [TextContent(type="text", text="请先使用 analyze_project 工具分析项目")]
         
         stats = self.kg_data.get('statistics', {})
         node_types = stats.get('node_types', {})
         
-        overview = f"""# 📋 项目概览
+        overview = f"""项目概览
 
 **项目路径**: {self.current_project_path or '未知'}
 
-## 📊 代码统计
+代码统计
 """
         
         for node_type, count in node_types.items():
@@ -499,16 +499,16 @@ class TreeSitterMCPServer:
     async def _get_type_info(self, args: Dict[str, Any]) -> Sequence[TextContent]:
         """获取类型信息"""
         if not self.mcp_tools:
-            return [TextContent(type="text", text="❌ 请先使用 analyze_project 工具分析项目")]
+            return [TextContent(type="text", text="请先使用 analyze_project 工具分析项目")]
         
         type_name = args.get("type_name")
         result = self.mcp_tools.get_type_info(type_name)
         
         if 'error' in result:
-            return [TextContent(type="text", text=f"❌ {result['error']}")]
+            return [TextContent(type="text", text=f"{result['error']}")]
         
         # 格式化输出
-        response = f"# 🏷️ {result['type'].capitalize()}: {result['name']}\n\n"
+        response = f"{result['type'].capitalize()}: {result['name']}\n\n"
         
         # 基本信息
         if result.get('modifiers'):
@@ -520,13 +520,13 @@ class TreeSitterMCPServer:
         if result.get('is_generic'):
             response += f"**泛型**: 是\n"
         
-        response += "\n## 📋 成员信息\n\n"
+        response += "\n成员信息\n\n"
         
         # 成员详情
         members = result.get('members', {})
         
         if members.get('methods'):
-            response += "### 🔧 方法\n"
+            response += "方法\n"
             for method in members['methods'][:10]:  # 限制显示数量
                 signature = method.get('signature', f"{method['name']}()")
                 operations = ', '.join(method.get('operations', []))
@@ -538,12 +538,12 @@ class TreeSitterMCPServer:
                 response += "\n"
         
         if members.get('properties'):
-            response += "### 🏷️ 属性\n"
+            response += "属性\n"
             for prop in members['properties'][:5]:
                 response += f"- **{prop['name']}**: {prop.get('type', 'unknown')}\n"
         
         if members.get('fields'):
-            response += "### 📦 字段\n"
+            response += "字段\n"
             for field in members['fields'][:5]:
                 response += f"- **{field['name']}**: {field.get('type', 'unknown')}\n"
         
@@ -552,20 +552,20 @@ class TreeSitterMCPServer:
     async def _search_methods(self, args: Dict[str, Any]) -> Sequence[TextContent]:
         """搜索方法"""
         if not self.mcp_tools:
-            return [TextContent(type="text", text="❌ 请先使用 analyze_project 工具分析项目")]
+            return [TextContent(type="text", text="请先使用 analyze_project 工具分析项目")]
         
         keyword = args.get("keyword")
         limit = args.get("limit", 10)
         
         result = self.mcp_tools.search_methods(keyword, limit)
         
-        response = f"# 🔍 搜索结果: '{keyword}'\n\n"
+        response = f"搜索结果: '{keyword}'\n\n"
         response += f"找到 {result['total_found']} 个相关方法\n\n"
         
         if result['methods']:
-            response += "## 📋 匹配的方法\n\n"
+            response += "匹配的方法\n\n"
             for i, method in enumerate(result['methods'], 1):
-                response += f"### {i}. {method['class']}.{method['method']['name']}\n"
+                response += f"{i}. {method['class']}.{method['method']['name']}\n"
                 response += f"**签名**: {method['signature']}\n"
                 operations = ', '.join(method['method'].get('operations', []))
                 if operations:
@@ -574,28 +574,28 @@ class TreeSitterMCPServer:
                     response += f"**上下文**: {method['context']}\n"
                 response += "\n"
         else:
-            response += "❌ 未找到匹配的方法"
+            response += "未找到匹配的方法"
         
         return [TextContent(type="text", text=response)]
     
     async def _get_namespace_info(self, args: Dict[str, Any]) -> Sequence[TextContent]:
         """获取命名空间信息"""
         if not self.mcp_tools:
-            return [TextContent(type="text", text="❌ 请先使用 analyze_project 工具分析项目")]
+            return [TextContent(type="text", text="请先使用 analyze_project 工具分析项目")]
         
         namespace_name = args.get("namespace_name")
         result = self.mcp_tools.get_namespace_info(namespace_name)
         
         if 'error' in result:
-            return [TextContent(type="text", text=f"❌ {result['error']}")]
+            return [TextContent(type="text", text=f"{result['error']}")]
         
-        response = f"# 🏢 命名空间: {result['namespace']}\n\n"
+        response = f"命名空间: {result['namespace']}\n\n"
         response += f"{result['summary']}\n\n"
         
         if result['types_detail']:
-            response += "## 📋 包含的类型\n\n"
+            response += "包含的类型\n\n"
             for type_info in result['types_detail']:
-                response += f"### {type_info['type'].capitalize()}: {type_info['name']}\n"
+                response += f"{type_info['type'].capitalize()}: {type_info['name']}\n"
                 if type_info.get('modifiers'):
                     response += f"- 修饰符: {', '.join(type_info['modifiers'])}\n"
                 
@@ -611,15 +611,15 @@ class TreeSitterMCPServer:
     async def _get_relationships(self, args: Dict[str, Any]) -> Sequence[TextContent]:
         """获取关系信息"""
         if not self.mcp_tools:
-            return [TextContent(type="text", text="❌ 请先使用 analyze_project 工具分析项目")]
+            return [TextContent(type="text", text="请先使用 analyze_project 工具分析项目")]
         
         type_name = args.get("type_name")
         result = self.mcp_tools.get_relationships(type_name)
         
         if 'error' in result:
-            return [TextContent(type="text", text=f"❌ {result['error']}")]
+            return [TextContent(type="text", text=f"{result['error']}")]
         
-        response = f"# 🔗 {result['type_name']} 的关系图\n\n"
+        response = f"{result['type_name']} 的关系图\n\n"
         response += f"**总结**: {result['summary']}\n\n"
         
         relationships = result['relationships']
@@ -627,15 +627,15 @@ class TreeSitterMCPServer:
         for rel_type, targets in relationships.items():
             if targets:
                 rel_name_map = {
-                    'inherits_from': '📈 继承自',
-                    'inherited_by': '📊 被继承', 
-                    'uses': '🔧 使用',
-                    'used_by': '📋 被使用',
-                    'contains': '📦 包含',
-                    'contained_in': '🏠 位于'
+                    'inherits_from': '继承自',
+                    'inherited_by': '被继承', 
+                    'uses': '使用',
+                    'used_by': '被使用',
+                    'contains': '包含',
+                    'contained_in': '位于'
                 }
                 
-                response += f"## {rel_name_map.get(rel_type, rel_type)}\n"
+                response += f"{rel_name_map.get(rel_type, rel_type)}\n"
                 for target in targets:
                     response += f"- {target}\n"
                 response += "\n"
@@ -645,7 +645,7 @@ class TreeSitterMCPServer:
     async def _get_method_details(self, args: Dict[str, Any]) -> Sequence[TextContent]:
         """获取方法详情"""
         if not self.mcp_tools:
-            return [TextContent(type="text", text="❌ 请先使用 analyze_project 工具分析项目")]
+            return [TextContent(type="text", text="请先使用 analyze_project 工具分析项目")]
         
         class_name = args.get("class_name")
         method_name = args.get("method_name")
@@ -653,9 +653,9 @@ class TreeSitterMCPServer:
         result = self.mcp_tools.get_method_details(class_name, method_name)
         
         if 'error' in result:
-            return [TextContent(type="text", text=f"❌ {result['error']}")]
+            return [TextContent(type="text", text=f"{result['error']}")]
         
-        response = f"# 🔧 方法详情: {result['class']}.{result['method_name']}\n\n"
+        response = f"方法详情: {result['class']}.{result['method_name']}\n\n"
         
         response += f"**签名**: {result['signature']}\n"
         response += f"**返回类型**: {result['return_type']}\n"
@@ -667,7 +667,7 @@ class TreeSitterMCPServer:
         if operations:
             response += f"**操作类型**: {', '.join(operations)}\n"
         
-        response += "\n## 📋 参数\n\n"
+        response += "\n参数\n\n"
         parameters = result.get('parameters', [])
         if parameters:
             for param in parameters:
@@ -679,7 +679,7 @@ class TreeSitterMCPServer:
         else:
             response += "无参数\n"
         
-        response += "\n## 🏷️ 特性\n\n"
+        response += "\n特性\n\n"
         characteristics = result.get('characteristics', {})
         for key, value in characteristics.items():
             if value:
@@ -690,11 +690,11 @@ class TreeSitterMCPServer:
                     'is_static': '静态方法',
                     'is_public': '公共方法'
                 }
-                response += f"✅ {key_map.get(key, key)}\n"
+                response += f"{key_map.get(key, key)}\n"
         
         suggestions = result.get('usage_suggestions', [])
         if suggestions:
-            response += "\n## 💡 使用建议\n\n"
+            response += "\n使用建议\n\n"
             for suggestion in suggestions:
                 response += f"- {suggestion}\n"
         
@@ -703,24 +703,24 @@ class TreeSitterMCPServer:
     async def _get_architecture_info(self, args: Dict[str, Any]) -> Sequence[TextContent]:
         """获取架构信息"""
         if not self.mcp_tools:
-            return [TextContent(type="text", text="❌ 请先使用 analyze_project 工具分析项目")]
+            return [TextContent(type="text", text="请先使用 analyze_project 工具分析项目")]
         
         result = self.mcp_tools.get_architecture_info()
         
         if 'error' in result:
-            return [TextContent(type="text", text=f"❌ {result['error']}")]
+            return [TextContent(type="text", text=f"{result['error']}")]
         
-        response = "# 🏠 系统架构分析\n\n"
+        response = "系统架构分析\n\n"
         
         # 架构概要
-        response += f"## 📊 架构概要\n{result.get('architecture_summary', '')}"
+        response += f"架构概要\n{result.get('architecture_summary', '')}"
         
         # 命名空间层次
         namespaces = result.get('namespace_hierarchy', {})
         if namespaces:
-            response += "\n\n## 🏢 命名空间层次\n"
+            response += "\n\n命名空间层次\n"
             for ns, info in namespaces.items():
-                response += f"\n### {ns} ({info['total_types']}个类型)\n"
+                response += f"\n{ns} ({info['total_types']}个类型)\n"
                 for type_name, types in info['types'].items():
                     if types:
                         response += f"- **{type_name}**: {', '.join(types[:5])}"
@@ -731,35 +731,35 @@ class TreeSitterMCPServer:
         # 类依赖关系
         dependencies = result.get('class_dependencies', {})
         if dependencies:
-            response += "\n## 🔗 类依赖关系\n"
+            response += "\n类依赖关系\n"
             for class_name, deps in list(dependencies.items())[:8]:  # 只显示前8个
-                response += f"\n### {class_name}\n"
+                response += f"\n{class_name}\n"
                 for dep in deps[:5]:  # 每个类只显示前5个依赖
                     response += f"- {dep}\n"
         
         # 接口实现
         implementations = result.get('interface_implementations', {})
         if implementations:
-            response += "\n## 📝 接口实现关系\n"
+            response += "\n接口实现关系\n"
             for interface, implementers in implementations.items():
-                response += f"\n### {interface}\n"
+                response += f"\n{interface}\n"
                 response += f"实现类: {', '.join(implementers)}\n"
         
         # 继承关系
         inheritance = result.get('inheritance_chains', {})
         base_classes = inheritance.get('base_classes', {})
         if base_classes:
-            response += "\n## 📈 继承关系\n"
+            response += "\n继承关系\n"
             for base_class, derived_classes in list(base_classes.items())[:5]:  # 只显示前5个
-                response += f"\n### {base_class} 基类\n"
+                response += f"\n{base_class} 基类\n"
                 response += f"派生类: {', '.join(derived_classes)}\n"
         
         # 组合关系  
         composition = result.get('composition_relationships', {})
         if composition:
-            response += "\n## 📦 组合关系\n"
+            response += "\n组合关系\n"
             for container, contained in list(composition.items())[:5]:  # 只显示前5个
-                response += f"\n### {container}\n"
+                response += f"\n{container}\n"
                 response += f"包含: {', '.join(contained[:5])}\n"
                 if len(contained) > 5:
                     response += f"等{len(contained)}个组件\n"
@@ -767,7 +767,7 @@ class TreeSitterMCPServer:
         # 如果没有找到任何类型，显示调试信息
         debug_info = result.get('debug_info', {})
         if debug_info and all(info['total_types'] == 0 for info in result.get('namespace_hierarchy', {}).values()):
-            response += "\n## 🔍 调试信息\n"
+            response += "\n调试信息\n"
             response += "检测到所有命名空间都显示0个类型，以下是调试信息：\n\n"
             
             sample_nodes = debug_info.get('sample_nodes', [])
@@ -822,11 +822,11 @@ class TreeSitterMCPServer:
     async def _list_all_types(self, args: Dict[str, Any]) -> Sequence[TextContent]:
         """列出所有类型"""
         if not self.kg_data:
-            return [TextContent(type="text", text="❌ 请先使用 analyze_project 工具分析项目")]
+            return [TextContent(type="text", text="请先使用 analyze_project 工具分析项目")]
         
         type_filter = args.get("type_filter", "").lower()
         
-        response = "# 📋 项目中的所有类型\n\n"
+        response = "项目中的所有类型\n\n"
         
         # 按类型分组
         types_by_category = {}
@@ -846,15 +846,15 @@ class TreeSitterMCPServer:
         
         # 输出结果
         type_icons = {
-            'class': '🏗️',
-            'interface': '📋', 
-            'struct': '📦',
-            'enum': '🔢'
+            'class': '',
+            'interface': '', 
+            'struct': '',
+            'enum': ''
         }
         
         for type_name, types in types_by_category.items():
-            icon = type_icons.get(type_name, '📄')
-            response += f"## {icon} {type_name.capitalize()}s ({len(types)}个)\n\n"
+            icon = type_icons.get(type_name, '')
+            response += f"{icon}{type_name.capitalize()}s ({len(types)}个)\n\n"
             
             for type_node in types:
                 response += f"- **{type_node['name']}**"
@@ -874,7 +874,7 @@ class TreeSitterMCPServer:
             response += "\n"
         
         if not types_by_category:
-            response += "❌ 未找到匹配的类型"
+            response += "未找到匹配的类型"
         
         return [TextContent(type="text", text=response)]
     
@@ -887,11 +887,11 @@ class TreeSitterMCPServer:
             if project_path:
                 # 清除特定项目缓存
                 self.cache_manager.clear_cache(project_path, language)
-                response = f"🗑️ 已清除项目缓存: {project_path}"
+                response = f"已清除项目缓存: {project_path}"
             else:
                 # 清除所有缓存
                 self.cache_manager.clear_cache()
-                response = "🗑️ 已清除所有缓存"
+                response = "已清除所有缓存"
             
             return [TextContent(type="text", text=response)]
             
@@ -915,14 +915,14 @@ class TreeSitterMCPServer:
             else:
                 size_str = f"{total_size} 字节"
             
-            response = f"""# 💾 缓存统计信息
+            response = f"""缓存统计信息
 
-## 📊 概览
+概览
 - 缓存项目数: {stats.get('cached_projects', 0)}
 - 缓存总大小: {size_str}
 - 缓存目录: {stats.get('cache_dir', 'N/A')}
 
-## 📁 缓存项目列表
+缓存项目列表
 """
             
             projects = stats.get('projects', [])
@@ -930,9 +930,9 @@ class TreeSitterMCPServer:
                 for i, project_key in enumerate(projects, 1):
                     response += f"{i}. {project_key}\n"
             else:
-                response += "ℹ️ 暂无缓存项目"
+                response += "暂无缓存项目"
             
-            response += "\n\n💡 **提示**: 使用 `clear_cache` 工具可以清除缓存"
+            response += "\n\n提示: 使用 `clear_cache` 工具可以清除缓存"
             
             return [TextContent(type="text", text=response)]
             
@@ -962,13 +962,13 @@ def main():
         asyncio.run(run_server())
     else:
         # 简化实现模式
-        print("🚀 Tree-Sitter代码分析器 (简化模式)")
-        print("📝 要获得完整MCP协议支持，请安装: pip install mcp==1.0.0")
-        print("⚡ 服务器功能已就绪，可以通过程序接口调用")
+        print("Tree-Sitter代码分析器 (简化模式)")
+        print("要获得完整MCP协议支持，请安装: pip install mcp==1.0.0")
+        print("服务器功能已就绪，可以通过程序接口调用")
         
         # 在简化模式下，可以提供一个基本的命令行接口用于测试
         async def simple_demo():
-            print("\n🔍 运行简单演示...")
+            print("\n运行简单演示...")
             try:
                 # 演示分析示例项目
                 result = await server_instance._analyze_project({
@@ -977,12 +977,12 @@ def main():
                 })
                 
                 if result and len(result) > 0:
-                    print("✅ 演示分析成功!")
+                    print("演示分析成功!")
                     print(result[0].text[:300] + "..." if len(result[0].text) > 300 else result[0].text)
                 else:
-                    print("❌ 演示分析失败")
+                    print("演示分析失败")
             except Exception as e:
-                print(f"❌ 演示出错: {e}")
+                print(f"演示出错: {e}")
         
         asyncio.run(simple_demo())
 
