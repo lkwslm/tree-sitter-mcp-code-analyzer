@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 MCP Server for Tree-Sitter代码分析器
 提供标准的MCP协议接口，让LLM能够通过工具调用获取代码结构信息
@@ -499,60 +500,57 @@ class TreeSitterMCPServer:
     async def _get_type_info(self, args: Dict[str, Any]) -> Sequence[TextContent]:
         """获取类型信息"""
         if not self.mcp_tools:
-            return [TextContent(type="text", text="❌ 请先使用 analyze_project 工具分析项目")]
+            return [TextContent(type="text", text="请先使用 analyze_project 工具分析项目")]
         
         type_name = args.get("type_name")
         result = self.mcp_tools.get_type_info(type_name)
         
         if 'error' in result:
-            return [TextContent(type="text", text=f"❌ {result['error']}")]
+            return [TextContent(type="text", text=f"{result['error']}")]
         
-        # 格式化输出
-        response = f"# 🏷️ {result['type'].capitalize()}: {result['name']}\n\n"
+        # 格式化输出，将修饰符集成到类名前面
+        modifiers = result.get('modifiers', [])
+        modifiers_str = ' '.join(modifiers) + ' ' if modifiers else ''
+        type_display = f"{modifiers_str}{result['type']}"
+        
+        response = f"# {type_display.capitalize()}: {result['name']}\n"
         
         # 基本信息
-        if result.get('modifiers'):
-            response += f"**修饰符**: {', '.join(result['modifiers'])}\n"
-        
         if result.get('base_types'):
             response += f"**继承自**: {', '.join(result['base_types'])}\n"
         
         if result.get('is_generic'):
             response += f"**泛型**: 是\n"
         
-        response += "\n## 📋 成员信息\n\n"
+        response += "## 成员信息\n"
         
         # 成员详情
         members = result.get('members', {})
         
         if members.get('methods'):
-            response += "### 🔧 方法\n"
+            response += "### 方法\n"
             for method in members['methods'][:10]:  # 限制显示数量
                 signature = method.get('signature', f"{method['name']}()")
-                operations = ', '.join(method.get('operations', []))
-                response += f"- **{signature}**\n"
-                if operations:
-                    response += f"  - 操作: {operations}\n"
-                if method.get('modifiers'):
-                    response += f"  - 修饰符: {', '.join(method['modifiers'])}\n"
-                response += "\n"
+                modifiers = method.get('modifiers', [])
+                modifier_str = ' '.join(modifiers) + ' ' if modifiers else ''
+                response += f"- {modifier_str}{signature}\n"
         
         if members.get('properties'):
-            response += "### 🏷️ 属性\n"
+            response += "### 属性\n"
             for prop in members['properties'][:5]:
-                response += f"- **{prop['name']}**: {prop.get('type', 'unknown')}\n"
+                response += f"- {prop['name']}: {prop.get('type', 'unknown')}\n"
         
         if members.get('fields'):
-            response += "### 📦 字段\n"
+            response += "### 字段\n"
             for field in members['fields'][:5]:
-                response += f"- **{field['name']}**: {field.get('type', 'unknown')}\n"
+                response += f"- {field['name']}: {field.get('type', 'unknown')}\n"
         
         return [TextContent(type="text", text=response)]
     
     async def _search_methods(self, args: Dict[str, Any]) -> Sequence[TextContent]:
         """搜索方法"""
         if not self.mcp_tools:
-            return [TextContent(type="text", text="❌ 请先使用 analyze_project 工具分析项目")]
+            return [TextContent(type="text", text="请先使用 analyze_project 工具分析项目")]
         
         keyword = args.get("keyword")
         limit = args.get("limit", 10)
@@ -941,6 +939,16 @@ class TreeSitterMCPServer:
 
 def main():
     """MCP服务器主入口"""
+    # 设置控制台输出编码
+    import os
+    os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
+    
+    # 设置 sys.stdout 编码
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
+    if hasattr(sys.stderr, 'reconfigure'):
+        sys.stderr.reconfigure(encoding='utf-8')
+    
     server_instance = TreeSitterMCPServer()
     
     if MCP_AVAILABLE:

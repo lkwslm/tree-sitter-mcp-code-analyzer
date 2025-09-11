@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 MCP HTTP服务器
 提供基于HTTP的MCP协议接口，支持Web客户端调用
@@ -717,6 +718,16 @@ def create_app() -> FastAPI:
 
 def main():
     """HTTP服务器主入口"""
+    # 设置控制台输出编码
+    import os
+    os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
+    
+    # 设置 sys.stdout 编码
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
+    if hasattr(sys.stderr, 'reconfigure'):
+        sys.stderr.reconfigure(encoding='utf-8')
+    
     if not HTTP_AVAILABLE:
         print("❌ FastAPI和Uvicorn未安装")
         print("📦 安装方法: pip install fastapi uvicorn")
