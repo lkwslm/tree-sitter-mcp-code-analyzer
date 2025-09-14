@@ -14,15 +14,11 @@ json5==0.9.14
 mcp==1.0.0
 anyio==4.0.0
 
-# HTTP服务器支持（可选）
+# HTTP服务器支持（SSE兼容）
 fastapi==0.104.1
 uvicorn==0.24.0
 typing-extensions==4.8.0
+pydantic==2.5.0
 
-# MCP协议支持
-mcp==1.0.0
-anyio==4.0.0
-
-# 可选依赖（用于扩展功能）
-# fastapi==0.104.1
-# uvicorn==0.24.0
+# HTTP客户端支持（测试用）
+aiohttp==3.9.0
