@@ -17,6 +17,7 @@ try:
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import JSONResponse, StreamingResponse
+    from pydantic import BaseModel
     import uvicorn
     HTTP_AVAILABLE = True
 except ImportError:
@@ -33,6 +34,24 @@ from src.cache.analysis_cache import AnalysisCache
 # 设置日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("tree-sitter-mcp-http-server")
+
+# MCP数据模型
+class MCPRequest(BaseModel):
+    jsonrpc: str = "2.0"
+    id: Optional[Union[str, int]] = None
+    method: str
+    params: Optional[Dict[str, Any]] = None
+
+class MCPResponse(BaseModel):
+    jsonrpc: str = "2.0"
+    id: Optional[Union[str, int]] = None
+    result: Optional[Any] = None
+    error: Optional[Dict[str, Any]] = None
+
+class MCPInitializeParams(BaseModel):
+    protocolVersion: str
+    capabilities: Dict[str, Any]
+    clientInfo: Dict[str, str]
 
 class TreeSitterMCPHTTPServer:
     """Tree-Sitter MCP HTTP服务器"""
@@ -65,6 +84,13 @@ class TreeSitterMCPHTTPServer:
         self.kg_data = None
         self.detailed_index = None
         self.current_project_path = None
+        
+        # MCP会话管理
+        self.initialized = False
+        self.client_capabilities = {}
+        self.server_capabilities = {
+            "tools": {}
+        }
         
         # 初始化缓存管理器
         self.cache_manager = AnalysisCache()
@@ -340,6 +366,152 @@ class TreeSitterMCPHTTPServer:
             except Exception as e:
                 logger.error(f"流式分析错误: {e}")
                 raise HTTPException(status_code=500, detail=f"分析失败: {str(e)}")
+        
+        @self.app.post("/sse")
+        @self.app.get("/sse")
+        @self.app.options("/sse")
+        async def mcp_sse_endpoint(request: Request):
+            """MCP over SSE 端点 - Cline兼容"""
+            # 处理OPTIONS预检请求
+            if request.method == "OPTIONS":
+                return JSONResponse(
+                    content={"message": "OK"},
+                    headers={
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                        "Access-Control-Allow-Headers": "*"
+                    }
+                )
+            
+            async def mcp_event_stream():
+                """MCP事件流生成器"""
+                try:
+                    # 发送初始化事件
+                    init_event = {
+                        "jsonrpc": "2.0",
+                        "method": "notifications/initialized",
+                        "params": {
+                            "protocolVersion": "2024-11-05",
+                            "capabilities": self.server_capabilities,
+                            "serverInfo": {
+                                "name": "tree-sitter-code-analyzer",
+                                "version": "1.0.0"
+                            }
+                        }
+                    }
+                    yield f"data: {json.dumps(init_event, ensure_ascii=False)}\n\n"
+                    
+                    # 保持连接活跃
+                    while True:
+                        # 发送心跳事件
+                        heartbeat = {
+                            "jsonrpc": "2.0",
+                            "method": "notifications/ping",
+                            "params": {"timestamp": asyncio.get_event_loop().time()}
+                        }
+                        yield f"data: {json.dumps(heartbeat, ensure_ascii=False)}\n\n"
+                        await asyncio.sleep(30)  # 攰30秒发送一次心跳
+                        
+                except Exception as e:
+                    error_event = {
+                        "jsonrpc": "2.0",
+                        "error": {
+                            "code": -32603,
+                            "message": "Internal error",
+                            "data": str(e)
+                        }
+                    }
+                    yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+            
+            return StreamingResponse(
+                mcp_event_stream(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Headers": "*",
+                    "Access-Control-Allow-Methods": "GET, POST, OPTIONS"
+                }
+            )
+        
+        @self.app.post("/message")
+        async def mcp_message_endpoint(request: Request):
+            """MCP消息处理端点"""
+            try:
+                body = await request.json()
+                mcp_request = MCPRequest(**body)
+                
+                # 处理初始化
+                if mcp_request.method == "initialize":
+                    params = MCPInitializeParams(**mcp_request.params)
+                    self.client_capabilities = params.capabilities
+                    self.initialized = True
+                    
+                    response = MCPResponse(
+                        id=mcp_request.id,
+                        result={
+                            "protocolVersion": "2024-11-05",
+                            "capabilities": self.server_capabilities,
+                            "serverInfo": {
+                                "name": "tree-sitter-code-analyzer",
+                                "version": "1.0.0"
+                            }
+                        }
+                    )
+                    return response.dict(exclude_none=True)
+                
+                # 处理tools/list
+                elif mcp_request.method == "tools/list":
+                    tools = await self._get_mcp_tools_list()
+                    response = MCPResponse(
+                        id=mcp_request.id,
+                        result={"tools": tools}
+                    )
+                    return response.dict(exclude_none=True)
+                
+                # 处理tools/call
+                elif mcp_request.method == "tools/call":
+                    if not mcp_request.params:
+                        raise HTTPException(status_code=400, detail="缺少参数")
+                    
+                    tool_name = mcp_request.params.get("name")
+                    arguments = mcp_request.params.get("arguments", {})
+                    
+                    result = await self._handle_tool_call(tool_name, arguments)
+                    
+                    # 转换为MCP格式的响应
+                    mcp_result = self._convert_to_mcp_result(result)
+                    
+                    response = MCPResponse(
+                        id=mcp_request.id,
+                        result=mcp_result
+                    )
+                    return response.dict(exclude_none=True)
+                
+                else:
+                    # 未知方法
+                    response = MCPResponse(
+                        id=mcp_request.id,
+                        error={
+                            "code": -32601,
+                            "message": "Method not found",
+                            "data": f"未知方法: {mcp_request.method}"
+                        }
+                    )
+                    return response.dict(exclude_none=True)
+            
+            except Exception as e:
+                logger.error(f"MCP消息处理错误: {e}")
+                response = MCPResponse(
+                    id=getattr(mcp_request, 'id', None) if 'mcp_request' in locals() else None,
+                    error={
+                        "code": -32603,
+                        "message": "Internal error",
+                        "data": str(e)
+                    }
+                )
+                return response.dict(exclude_none=True)
     
     async def _handle_tool_call(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """处理工具调用"""
@@ -367,6 +539,205 @@ class TreeSitterMCPHTTPServer:
             return await self._get_cache_stats(arguments)
         else:
             raise HTTPException(status_code=404, detail=f"未知工具: {name}")
+    
+    async def _get_mcp_tools_list(self) -> List[Dict[str, Any]]:
+        """获取MCP工具列表"""
+        return [
+            {
+                "name": "analyze_project",
+                "description": "分析指定路径的C#项目，生成代码结构概览",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "project_path": {
+                            "type": "string",
+                            "description": "要分析的项目路径"
+                        },
+                        "language": {
+                            "type": "string", 
+                            "description": "编程语言（默认csharp）",
+                            "default": "csharp"
+                        },
+                        "compress": {
+                            "type": "boolean",
+                            "description": "是否压缩输出（推荐true）",
+                            "default": True
+                        }
+                    },
+                    "required": ["project_path"]
+                }
+            },
+            {
+                "name": "get_project_overview",
+                "description": "获取当前项目的概览信息",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {}
+                }
+            },
+            {
+                "name": "get_type_info",
+                "description": "获取指定类型（类、接口等）的详细信息",
+                "inputSchema": {
+                    "type": "object", 
+                    "properties": {
+                        "type_name": {
+                            "type": "string",
+                            "description": "类型名称（如User、UserService等）"
+                        }
+                    },
+                    "required": ["type_name"]
+                }
+            },
+            {
+                "name": "search_methods",
+                "description": "根据关键词搜索相关的方法",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "keyword": {
+                            "type": "string", 
+                            "description": "搜索关键词（如Create、Update、Get等）"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "返回结果数量限制",
+                            "default": 10
+                        }
+                    },
+                    "required": ["keyword"]
+                }
+            },
+            {
+                "name": "get_namespace_info",
+                "description": "获取指定命名空间的详细信息",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "namespace_name": {
+                            "type": "string",
+                            "description": "命名空间名称"
+                        }
+                    },
+                    "required": ["namespace_name"]
+                }
+            },
+            {
+                "name": "get_relationships",
+                "description": "获取指定类型的关系信息（继承、使用等）",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "type_name": {
+                            "type": "string",
+                            "description": "类型名称"
+                        }
+                    },
+                    "required": ["type_name"]
+                }
+            },
+            {
+                "name": "get_method_details",
+                "description": "获取指定方法的详细信息",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "class_name": {
+                            "type": "string",
+                            "description": "类名"
+                        },
+                        "method_name": {
+                            "type": "string", 
+                            "description": "方法名"
+                        }
+                    },
+                    "required": ["class_name", "method_name"]
+                }
+            },
+            {
+                "name": "get_architecture_info",
+                "description": "获取项目的架构设计信息",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {}
+                }
+            },
+            {
+                "name": "list_all_types",
+                "description": "列出项目中的所有类型",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "type_filter": {
+                            "type": "string",
+                            "description": "类型过滤器（class、interface、enum等，默认全部）"
+                        }
+                    }
+                }
+            },
+            {
+                "name": "clear_cache",
+                "description": "清除分析缓存（可指定项目或清除全部）",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "project_path": {
+                            "type": "string",
+                            "description": "要清除缓存的项目路径（不提供则清除全部缓存）"
+                        },
+                        "language": {
+                            "type": "string",
+                            "description": "编程语言（默认csharp）",
+                            "default": "csharp"
+                        }
+                    }
+                }
+            },
+            {
+                "name": "get_cache_stats",
+                "description": "获取缓存统计信息",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {}
+                }
+            }
+        ]
+    
+    def _convert_to_mcp_result(self, result: Any) -> Dict[str, Any]:
+        """转换结果为MCP格式"""
+        if isinstance(result, dict) and "text" in result:
+            # 返回文本内容
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": result["text"]
+                    }
+                ],
+                "isError": False
+            }
+        elif isinstance(result, dict):
+            # 返回结构化数据
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(result, ensure_ascii=False, indent=2)
+                    }
+                ],
+                "isError": False
+            }
+        else:
+            # 返回其他类型
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": str(result)
+                    }
+                ],
+                "isError": False
+            }
     
     async def _analyze_project(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """分析项目（支持缓存）"""
