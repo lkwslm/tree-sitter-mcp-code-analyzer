@@ -134,7 +134,7 @@ class TreeSitterMCPServer:
                         "properties": {
                             "project_path": {
                                 "type": "string",
-                                "description": "要分析的项目路径"
+ "description": "要分析的项目路径"
                             },
                             "language": {
                                 "type": "string", 
@@ -170,25 +170,6 @@ class TreeSitterMCPServer:
                             }
                         },
                         "required": ["type_name"]
-                    }
-                ),
-                Tool(
-                    name="search_methods",
-                    description="根据关键词搜索相关的方法",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "keyword": {
-                                "type": "string", 
-                                "description": "搜索关键词（如Create、Update、Get等）"
-                            },
-                            "limit": {
-                                "type": "integer",
-                                "description": "返回结果数量限制",
-                                "default": 10
-                            }
-                        },
-                        "required": ["keyword"]
                     }
                 ),
                 Tool(
@@ -296,8 +277,6 @@ class TreeSitterMCPServer:
                     return await self._get_project_overview(arguments)
                 elif name == "get_type_info":
                     return await self._get_type_info(arguments)
-                elif name == "search_methods":
-                    return await self._search_methods(arguments)
                 elif name == "get_namespace_info":
                     return await self._get_namespace_info(arguments)
                 elif name == "get_relationships":
@@ -505,6 +484,29 @@ class TreeSitterMCPServer:
         type_name = args.get("type_name")
         result = self.mcp_tools.get_type_info(type_name)
         
+        # 如果是获取所有类型
+        if 'all_types' in result:
+            response = "所有类型列表:\n\n"
+            types_by_category = {}
+            
+            # 按类型分组
+            for name, type_info in result['all_types'].items():
+                type_category = type_info['type']
+                if type_category not in types_by_category:
+                    types_by_category[type_category] = []
+                types_by_category[type_category].append(type_info)
+            
+            # 显示各类型
+            for category, types in types_by_category.items():
+                response += f"{category.capitalize()}类型:\n"
+                for type_info in types:
+                    modifiers = type_info.get('modifiers', [])
+                    modifiers_str = ' '.join(modifiers) + ' ' if modifiers else ''
+                    response += f"  {modifiers_str}{type_info['name']}\n"
+                response += "\n"
+            
+            return [TextContent(type="text", text=response)]
+        
         if 'error' in result:
             return [TextContent(type="text", text=f"{result['error']}")]
         
@@ -513,37 +515,45 @@ class TreeSitterMCPServer:
         modifiers_str = ' '.join(modifiers) + ' ' if modifiers else ''
         type_display = f"{modifiers_str}{result['type']}"
         
-        response = f"# {type_display.capitalize()}: {result['name']}\n"
+        response = f"{type_display.capitalize()}: {result['name']}\n"
         
         # 基本信息
         if result.get('base_types'):
-            response += f"**继承自**: {', '.join(result['base_types'])}\n"
+            response += f"继承自: {', '.join(result['base_types'])}\n"
         
         if result.get('is_generic'):
-            response += f"**泛型**: 是\n"
+            response += f"泛型: 是\n"
         
-        response += "## 成员信息\n"
+        response += "\n成员信息:\n"
         
         # 成员详情
         members = result.get('members', {})
         
+        if members.get('constructors'):
+            response += "\n构造函数:\n"
+            for ctor in members['constructors']:
+                signature = ctor.get('signature', f"{ctor['name']}()")
+                modifiers = ctor.get('modifiers', [])
+                modifier_str = ' '.join(modifiers) + ' ' if modifiers else ''
+                response += f"  {modifier_str}{signature}\n"
+        
         if members.get('methods'):
-            response += "### 方法\n"
-            for method in members['methods'][:10]:  # 限制显示数量
+            response += "\n方法:\n"
+            for method in members['methods']:
                 signature = method.get('signature', f"{method['name']}()")
                 modifiers = method.get('modifiers', [])
                 modifier_str = ' '.join(modifiers) + ' ' if modifiers else ''
-                response += f"- {modifier_str}{signature}\n"
+                response += f"  {modifier_str}{signature}\n"
         
         if members.get('properties'):
-            response += "### 属性\n"
-            for prop in members['properties'][:5]:
-                response += f"- {prop['name']}: {prop.get('type', 'unknown')}\n"
+            response += "\n属性:\n"
+            for prop in members['properties']:
+                response += f"  {prop['name']}: {prop.get('type', 'unknown')}\n"
         
         if members.get('fields'):
-            response += "### 字段\n"
-            for field in members['fields'][:5]:
-                response += f"- {field['name']}: {field.get('type', 'unknown')}\n"
+            response += "\n字段:\n"
+            for field in members['fields']:
+                response += f"  {field['name']}: {field.get('type', 'unknown')}\n"
         
         return [TextContent(type="text", text=response)]
     
@@ -579,29 +589,29 @@ class TreeSitterMCPServer:
     async def _get_namespace_info(self, args: Dict[str, Any]) -> Sequence[TextContent]:
         """获取命名空间信息"""
         if not self.mcp_tools:
-            return [TextContent(type="text", text="❌ 请先使用 analyze_project 工具分析项目")]
+            return [TextContent(type="text", text="请先使用 analyze_project 工具分析项目")]
         
         namespace_name = args.get("namespace_name")
         result = self.mcp_tools.get_namespace_info(namespace_name)
         
         if 'error' in result:
-            return [TextContent(type="text", text=f"❌ {result['error']}")]
+            return [TextContent(type="text", text=f"{result['error']}")]
         
-        response = f"# 🏢 命名空间: {result['namespace']}\n\n"
+        response = f"命名空间: {result['namespace']}\n\n"
         response += f"{result['summary']}\n\n"
         
         if result['types_detail']:
-            response += "## 📋 包含的类型\n\n"
+            response += "包含的类型:\n\n"
             for type_info in result['types_detail']:
-                response += f"### {type_info['type'].capitalize()}: {type_info['name']}\n"
+                response += f"{type_info['type'].capitalize()}: {type_info['name']}\n"
                 if type_info.get('modifiers'):
-                    response += f"- 修饰符: {', '.join(type_info['modifiers'])}\n"
+                    response += f"  修饰符: {', '.join(type_info['modifiers'])}\n"
                 
                 member_counts = type_info.get('member_counts', {})
                 if member_counts:
                     counts = [f"{k}: {v}" for k, v in member_counts.items() if v > 0]
                     if counts:
-                        response += f"- 成员: {', '.join(counts)}\n"
+                        response += f"  成员: {', '.join(counts)}\n"
                 response += "\n"
         
         return [TextContent(type="text", text=response)]
@@ -609,33 +619,58 @@ class TreeSitterMCPServer:
     async def _get_relationships(self, args: Dict[str, Any]) -> Sequence[TextContent]:
         """获取关系信息"""
         if not self.mcp_tools:
-            return [TextContent(type="text", text="❌ 请先使用 analyze_project 工具分析项目")]
+            return [TextContent(type="text", text="请先使用 analyze_project 工具分析项目")]
         
         type_name = args.get("type_name")
         result = self.mcp_tools.get_relationships(type_name)
         
-        if 'error' in result:
-            return [TextContent(type="text", text=f"❌ {result['error']}")]
+        # 如果是获取所有关系
+        if 'all_relationships' in result:
+            response = "所有继承和使用关系:\n\n"
+            all_relationships = result['all_relationships']
+            
+            # 显示继承关系
+            if all_relationships['inherits_from']:
+                response += "继承关系:\n"
+                for rel in all_relationships['inherits_from'][:20]:  # 限制显示数量
+                    response += f"  {rel['from']} -> {rel['to']} ({rel['type']})\n"
+                if len(all_relationships['inherits_from']) > 20:
+                    response += f"  ... 还有 {len(all_relationships['inherits_from']) - 20} 个继承关系\n"
+                response += "\n"
+            
+            # 显示使用关系
+            if all_relationships['uses']:
+                response += "使用关系:\n"
+                for rel in all_relationships['uses'][:20]:  # 限制显示数量
+                    response += f"  {rel['from']} -> {rel['to']} ({rel['type']})\n"
+                if len(all_relationships['uses']) > 20:
+                    response += f"  ... 还有 {len(all_relationships['uses']) - 20} 个使用关系\n"
+                response += "\n"
+            
+            return [TextContent(type="text", text=response)]
         
-        response = f"# 🔗 {result['type_name']} 的关系图\n\n"
-        response += f"**总结**: {result['summary']}\n\n"
+        if 'error' in result:
+            return [TextContent(type="text", text=f"{result['error']}")]
+        
+        response = f"{result['type_name']} 的关系图\n\n"
+        response += f"总结: {result['summary']}\n\n"
         
         relationships = result['relationships']
         
         for rel_type, targets in relationships.items():
             if targets:
                 rel_name_map = {
-                    'inherits_from': '📈 继承自',
-                    'inherited_by': '📊 被继承', 
-                    'uses': '🔧 使用',
-                    'used_by': '📋 被使用',
-                    'contains': '📦 包含',
-                    'contained_in': '🏠 位于'
+                    'inherits_from': '继承自',
+                    'inherited_by': '被继承', 
+                    'uses': '使用',
+                    'used_by': '被使用',
+                    'contains': '包含',
+                    'contained_in': '位于'
                 }
                 
-                response += f"## {rel_name_map.get(rel_type, rel_type)}\n"
+                response += f"{rel_name_map.get(rel_type, rel_type)}:\n"
                 for target in targets:
-                    response += f"- {target}\n"
+                    response += f"  {target}\n"
                 response += "\n"
         
         return [TextContent(type="text", text=response)]
@@ -643,7 +678,7 @@ class TreeSitterMCPServer:
     async def _get_method_details(self, args: Dict[str, Any]) -> Sequence[TextContent]:
         """获取方法详情"""
         if not self.mcp_tools:
-            return [TextContent(type="text", text="❌ 请先使用 analyze_project 工具分析项目")]
+            return [TextContent(type="text", text="请先使用 analyze_project 工具分析项目")]
         
         class_name = args.get("class_name")
         method_name = args.get("method_name")
@@ -701,7 +736,7 @@ class TreeSitterMCPServer:
     async def _get_architecture_info(self, args: Dict[str, Any]) -> Sequence[TextContent]:
         """获取架构信息"""
         if not self.mcp_tools:
-            return [TextContent(type="text", text="❌ 请先使用 analyze_project 工具分析项目")]
+            return [TextContent(type="text", text="请先使用 analyze_project 工具分析项目")]
         
         result = self.mcp_tools.get_architecture_info()
         

@@ -111,14 +111,15 @@ def show_available_tools():
     
     tools = [
         ("analyze_project", "分析指定路径的C#项目，生成代码结构概览"),
-        ("get_project_overview", "获取当前项目的概览信息"),
-        ("get_type_info", "获取指定类型（类、接口等）的详细信息"),
-        ("search_methods", "根据关键词搜索相关的方法"),
-        ("get_namespace_info", "获取指定命名空间的详细信息"),
-        ("get_relationships", "获取指定类型的关系信息（继承、使用等）"),
-        ("get_method_details", "获取指定方法的详细信息"),
-        ("get_architecture_info", "获取项目的架构设计信息"),
-        ("list_all_types", "列出项目中的所有类型")
+        ("get_project_overview", "获取项目概览信息"),
+        ("get_type_info", "查看UserService类型详情", {"type_name": "UserService"}),
+        ("get_namespace_info", "查看命名空间详情", {"namespace_name": "MyProject.Services"}),
+        ("get_relationships", "查看UserService的关系", {"type_name": "UserService"}),
+        ("get_method_details", "查看具体方法详情", {"class_name": "UserService", "method_name": "CreateUser"}),
+        ("get_architecture_info", "获取架构设计信息"),
+        ("list_all_types", "列出所有类型"),
+        ("clear_cache", "清除缓存"),
+        ("get_cache_stats", "获取缓存统计")
     ]
     
     for i, (tool_name, description) in enumerate(tools, 1):

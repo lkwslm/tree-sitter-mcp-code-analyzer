@@ -185,14 +185,6 @@ class TreeSitterMCPHTTPServer:
                         }
                     },
                     {
-                        "name": "search_methods", 
-                        "description": "根据关键词搜索相关的方法",
-                        "parameters": {
-                            "keyword": {"type": "string", "required": True, "description": "搜索关键词"},
-                            "limit": {"type": "integer", "default": 10, "description": "返回结果数量限制"}
-                        }
-                    },
-                    {
                         "name": "get_namespace_info",
                         "description": "获取指定命名空间的详细信息",
                         "parameters": {
@@ -410,7 +402,7 @@ class TreeSitterMCPHTTPServer:
                             "params": {"timestamp": asyncio.get_event_loop().time()}
                         }
                         yield f"data: {json.dumps(heartbeat, ensure_ascii=False)}\n\n"
-                        await asyncio.sleep(30)  # 攰30秒发送一次心跳
+                        await asyncio.sleep(30)  # 收30秒发送一次心跳
                         
                 except Exception as e:
                     error_event = {
@@ -521,8 +513,6 @@ class TreeSitterMCPHTTPServer:
             return await self._get_project_overview(arguments)
         elif name == "get_type_info":
             return await self._get_type_info(arguments)
-        elif name == "search_methods":
-            return await self._search_methods(arguments)
         elif name == "get_namespace_info":
             return await self._get_namespace_info(arguments)
         elif name == "get_relationships":
@@ -587,25 +577,6 @@ class TreeSitterMCPHTTPServer:
                         }
                     },
                     "required": ["type_name"]
-                }
-            },
-            {
-                "name": "search_methods",
-                "description": "根据关键词搜索相关的方法",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "keyword": {
-                            "type": "string", 
-                            "description": "搜索关键词（如Create、Update、Get等）"
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "返回结果数量限制",
-                            "default": 10
-                        }
-                    },
-                    "required": ["keyword"]
                 }
             },
             {
@@ -934,28 +905,11 @@ class TreeSitterMCPHTTPServer:
             raise HTTPException(status_code=400, detail="请先使用 analyze_project 分析项目")
         
         type_name = args.get("type_name")
-        if not type_name:
-            raise HTTPException(status_code=400, detail="缺少 type_name 参数")
-        
         result = self.mcp_tools.get_type_info(type_name)
         
         if 'error' in result:
             raise HTTPException(status_code=404, detail=result['error'])
         
-        return result
-    
-    async def _search_methods(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        """搜索方法"""
-        if not self.mcp_tools:
-            raise HTTPException(status_code=400, detail="请先使用 analyze_project 分析项目")
-        
-        keyword = args.get("keyword")
-        if not keyword:
-            raise HTTPException(status_code=400, detail="缺少 keyword 参数")
-        
-        limit = args.get("limit", 10)
-        
-        result = self.mcp_tools.search_methods(keyword, limit)
         return result
     
     async def _get_namespace_info(self, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -979,10 +933,7 @@ class TreeSitterMCPHTTPServer:
         if not self.mcp_tools:
             raise HTTPException(status_code=400, detail="请先使用 analyze_project 分析项目")
         
-        type_name = args.get("type_name")
-        if not type_name:
-            raise HTTPException(status_code=400, detail="缺少 type_name 参数")
-        
+        type_name = args.get("type_name")  # 可以为None
         result = self.mcp_tools.get_relationships(type_name)
         
         if 'error' in result:

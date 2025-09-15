@@ -68,16 +68,28 @@ class MCPCodeTools:
         
         return result
     
-    def get_type_info(self, type_name: str) -> Dict[str, Any]:
+    def get_type_info(self, type_name: str = None) -> Dict[str, Any]:
         """
         获取类型详细信息
         
         Args:
-            type_name: 类型名称（类、接口、结构体等）
+            type_name: 类型名称（类、接口、结构体等），如果不提供则返回所有类型
             
         Returns:
             类型的详细信息，包含所有成员
         """
+        # 如果没有提供类型名称，返回所有类型列表
+        if type_name is None:
+            all_types = {}
+            for name, type_info in self.detailed_index.get('types', {}).items():
+                all_types[name] = {
+                    'name': name,
+                    'type': type_info.get('type', 'unknown'),
+                    'modifiers': type_info.get('metadata', {}).get('modifiers', []),
+                    'member_counts': type_info.get('metadata', {}).get('member_counts', {})
+                }
+            return {'all_types': all_types}
+        
         if type_name not in self.detailed_index.get('types', {}):
             return {'error': f'类型 {type_name} 不存在'}
         
@@ -153,57 +165,6 @@ class MCPCodeTools:
         
         return result
     
-    def search_methods(self, keyword: str, limit: int = 10) -> Dict[str, Any]:
-        """
-        搜索包含关键词的方法
-        
-        Args:
-            keyword: 搜索关键词
-            limit: 返回结果数量限制
-            
-        Returns:
-            匹配的方法列表
-        """
-        keyword_lower = keyword.lower()
-        matching_methods = []
-        
-        for method_key, method_info in self.detailed_index.get('methods', {}).items():
-            method = method_info['method']
-            score = 0
-            
-            # 方法名匹配
-            if keyword_lower in method['name'].lower():
-                score += 10
-            
-            # 操作类型匹配
-            operations = method.get('operations', [])
-            for op in operations:
-                if keyword_lower in op.lower():
-                    score += 5
-            
-            # 返回类型匹配
-            return_type = method.get('return_type', '')
-            if keyword_lower in return_type.lower():
-                score += 3
-            
-            if score > 0:
-                matching_methods.append({
-                    'score': score,
-                    'class': method_info['class'],
-                    'method': method,
-                    'signature': self._build_method_signature(method),
-                    'context': method_info.get('context', '')
-                })
-        
-        # 按分数排序
-        matching_methods.sort(key=lambda x: x['score'], reverse=True)
-        
-        return {
-            'keyword': keyword,
-            'total_found': len(matching_methods),
-            'methods': matching_methods[:limit]
-        }
-    
     def get_architecture_info(self) -> Dict[str, Any]:
         """
         获取架构设计信息
@@ -227,18 +188,53 @@ class MCPCodeTools:
         
         return result
     
-    def get_relationships(self, type_name: str) -> Dict[str, Any]:
+    def get_relationships(self, type_name: str = None) -> Dict[str, Any]:
         """
         获取类型的关系信息
         
         Args:
-            type_name: 类型名称
+            type_name: 类型名称，如果不提供则返回所有关系
             
         Returns:
-            该类型的所有关系（继承、使用等）
+            该类型的所有关系（继承、使用等）或所有关系
         """
         if not self.kg_data:
             return {'error': '知识图谱数据未加载'}
+        
+        # 如果没有提供类型名称，返回所有关系
+        if type_name is None:
+            all_relationships = {
+                'inherits_from': [],
+                'inherited_by': [],
+                'uses': [],
+                'used_by': [],
+                'contains': [],
+                'contained_in': []
+            }
+            
+            # 收集所有关系
+            for rel in self.kg_data.get('relationships', []):
+                rel_type = rel['type']
+                from_id = rel['from']
+                to_id = rel['to']
+                
+                from_name = self._get_node_name_by_id(from_id)
+                to_name = self._get_node_name_by_id(to_id)
+                
+                if from_name and to_name:
+                    relationship_entry = {
+                        'from': from_name,
+                        'to': to_name,
+                        'type': rel_type
+                    }
+                    
+                    if rel_type in all_relationships:
+                        all_relationships[rel_type].append(relationship_entry)
+            
+            return {
+                'all_relationships': all_relationships,
+                'summary': '显示所有继承和使用关系'
+            }
         
         relationships = {
             'inherits_from': [],

@@ -119,10 +119,10 @@ def demo_practical_workflow():
     # 模拟LLM的思考过程
     steps = [
         ("1. 获取项目概览", "LLM读取初始上下文，了解项目整体结构"),
-        ("2. 识别相关类型", "发现User和UserService类与用户管理相关"),
-        ("3. 查询User类详情", "调用get_type_info('User')获取User类的完整信息"),
-        ("4. 查询UserService详情", "调用get_type_info('UserService')了解服务层实现"),
-        ("5. 搜索用户操作", "调用search_methods('User')找到所有用户相关操作"),
+        ("2. 查看命名空间", "调用get_namespace_info('MyProject.Models')查看模型命名空间"),
+        ("3. 查看用户服务", "调用get_type_info('UserService')查看用户服务类详情"),
+        ("4. 查看关系图", "调用get_relationships('UserService')查看用户服务的关系"),
+        ("5. 查看方法详情", "调用get_method_details('UserService', 'CreateUser')查看创建用户方法"),
         ("6. 分析类型关系", "调用get_relationships('User')了解User的继承和使用关系"),
         ("7. 生成回答", "基于收集的信息为用户提供全面的解答")
     ]

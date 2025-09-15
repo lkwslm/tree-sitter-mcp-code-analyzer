@@ -75,11 +75,10 @@ def demo_layered_concept():
     print("=" * 50)
     
     example_tools = [
-        "get_type_info(type_name)",
-        "search_methods(keyword)", 
+        "get_type_info(type_name)", 
+        "get_namespace_info(namespace_name)",
         "get_relationships(type_name)",
-        "get_namespace_info(namespace)",
-        "get_method_details(class, method)"
+        "get_method_details(class_name, method_name)",
     ]
     
     print("LLM可用的查询工具:")
