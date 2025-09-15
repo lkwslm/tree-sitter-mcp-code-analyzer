@@ -38,23 +38,21 @@ class LayeredSummaryGenerator:
         classes = node_types.get('class', 0)
         interfaces = node_types.get('interface', 0)
         
-        # 主要命名空间
-        namespaces = []
+        # 命名空间去重处理
+        namespaces = list(set([node['name'] for node in kg_data.get('nodes', []) if node['type'] == 'namespace']))
         main_classes = []
         
         for node in kg_data.get('nodes', []):
-            if node['type'] == 'namespace' and len(namespaces) < 3:
-                namespaces.append(node['name'])
-            elif node['type'] == 'class' and len(main_classes) < 5:
+            if node['type'] == 'class' and len(main_classes) < 5:
                 main_classes.append(node['name'])
         
         summary_parts = [
-            f"# C#代码结构概览",
+            f"C#代码结构概览",
             f"",
-            f"该项目包含 **{classes}个类** 和 **{interfaces}个接口**",
+            f"该项目包含 {classes}个类 和 {interfaces}个接口",
             f"",
-            f"**主要命名空间**: {', '.join(namespaces)}",
-            f"**核心类型**: {', '.join(main_classes)}",
+            f"主要命名空间: {', '.join(namespaces[:3])}",
+            f"核心类型: {', '.join(main_classes)}",
             f"",
             f"使用 get_detailed_info() 工具获取更多详细信息"
         ]
@@ -64,50 +62,58 @@ class LayeredSummaryGenerator:
     def _generate_navigation_index(self, kg_data: Dict[str, Any]) -> str:
         """生成导航索引 - 帮助LLM了解可以查询什么"""
         navigation_parts = [
-            f"# 可查询的信息类型",
+            f"可查询的信息类型",
             f"",
-            f"## 命名空间查询",
-            f"- `get_namespace_info('namespace_name')` - 查看相应命名空间详情",
+            f"命名空间查询",
+            f"- get_namespace_info('namespace_name') - 查看相应命名空间详情",
             f""
         ]
         
-        # 命名空间列表（仅显示名称，去除冗余描述）
-        namespaces = [node['name'] for node in kg_data.get('nodes', []) if node['type'] == 'namespace']
-        
-        # 去重并排序
-        unique_namespaces = sorted(list(set(namespaces)))
+        # 命名空间去重并排序
+        namespaces = sorted(list(set([node['name'] for node in kg_data.get('nodes', []) if node['type'] == 'namespace'])))
         
         # 分组显示，每行显示多个命名空间
-        for i in range(0, len(unique_namespaces), 3):
-            group = unique_namespaces[i:i+3]
-            namespace_line = "  - " + ", ".join([f"`{ns}`" for ns in group])
+        for i in range(0, len(namespaces), 4):
+            group = namespaces[i:i+4]
+            namespace_line = "  - " + ", ".join(group)
             navigation_parts.append(namespace_line)
         
         navigation_parts.extend([
             f"",
-            f"## 类型查询",
-            f"- `get_type_info('type_name')` - 查看指定类型详细信息",
+            f"类型查询",
+            f"- get_type_info('type_name') - 查看指定类型详细信息",
+            f"- get_type_info() - 查看所有类型列表",
             f""
         ])
         
-        # 主要类型列表（简化显示）
-        main_types = [node for node in kg_data.get('nodes', []) 
-                     if node['type'] in ['class', 'interface'] and 
-                     'public' in node.get('metadata', {}).get('modifiers', [])]
+        # 获取所有公共类型（不限制数量）
+        all_types = [node for node in kg_data.get('nodes', []) 
+                    if node['type'] in ['class', 'interface', 'struct', 'enum'] and 
+                    'public' in node.get('metadata', {}).get('modifiers', [])]
         
-        # 只显示前12个类型，分组显示
-        for i in range(0, min(len(main_types), 12), 4):
-            group = main_types[i:i+4]
-            type_names = [node['name'] for node in group]
-            type_line = "  - " + ", ".join([f"`{name}`" for name in type_names])
-            navigation_parts.append(type_line)
+        # 按类型分组显示所有类型
+        types_by_category = {}
+        for node in all_types:
+            node_type = node['type']
+            if node_type not in types_by_category:
+                types_by_category[node_type] = []
+            types_by_category[node_type].append(node['name'])
+        
+        # 显示各类型
+        for type_name, type_names in types_by_category.items():
+            navigation_parts.append(f"{type_name.capitalize()}类型:")
+            # 分组显示，每行6个
+            for i in range(0, len(type_names), 6):
+                group = type_names[i:i+6]
+                type_line = "  - " + ", ".join(group)
+                navigation_parts.append(type_line)
+            navigation_parts.append("")
         
         navigation_parts.extend([
-            f"",
-            f"## 其他查询",
-            f"- `search_methods(keyword)` - 搜索相关方法",
-            f"- `get_architecture_info()` - 查看架构设计",
-            f"- `get_relationships(type_name)` - 查看类型关系"
+            f"其他查询",
+            f"- get_architecture_info() - 查看架构设计",
+            f"- get_relationships(type_name) - 查看类型关系",
+            f"- get_relationships() - 查看所有继承和使用关系"
         ])
         
         return "\n".join(navigation_parts)
