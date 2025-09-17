@@ -1,29 +1,94 @@
 # -*- coding: utf-8 -*-
 """
-MCP HTTP服务器
-提供基于HTTP的MCP协议接口，支持Web客户端调用
+HTTP MCP Server for Tree-Sitter代码分析器
+提供标准的MCP协议接口，让LLM能够通过HTTP/SSE远程访问代码结构信息
+基于Starlette和SSE传输
 """
 import asyncio
 import json
 import logging
-from typing import Any, Dict, List, Optional, Union
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence, Union
 import sys
+import uvicorn
+from starlette.applications import Starlette
+from starlette.routing import Route, Mount
+from starlette.responses import Response
 
 # 添加src路径
 sys.path.append(str(Path(__file__).parent / 'src'))
 
 try:
-    from fastapi import FastAPI, HTTPException, Request
-    from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import JSONResponse, StreamingResponse
-    from pydantic import BaseModel
-    import uvicorn
-    HTTP_AVAILABLE = True
+    from mcp.server import Server
+    from mcp.server.models import InitializationOptions
+    from mcp.server.sse import SseServerTransport
+    from mcp.types import (
+        Resource, 
+        Tool, 
+        TextContent, 
+        ImageContent, 
+        EmbeddedResource
+    )
+    MCP_AVAILABLE = True
 except ImportError:
-    print("警告: FastAPI/Uvicorn未安装，HTTP服务器不可用")
-    print("安装方法: pip install fastapi uvicorn")
-    HTTP_AVAILABLE = False
+    # 如果mcp包不可用，提供一个简化的实现
+    print("警告: MCP包未安装，使用简化实现")
+    MCP_AVAILABLE = False
+    
+    class TextContent:
+        def __init__(self, type: str, text: str):
+            self.type = type
+            self.text = text
+    
+    class ImageContent:
+        def __init__(self, type: str, data: str):
+            self.type = type
+            self.data = data
+    
+    class EmbeddedResource:
+        def __init__(self, type: str, resource: Any):
+            self.type = type
+            self.resource = resource
+    
+    class Tool:
+        def __init__(self, name: str, description: str, inputSchema: Dict[str, Any]):
+            self.name = name
+            self.description = description
+            self.inputSchema = inputSchema
+    
+    class InitializationOptions:
+        def __init__(self, server_name: str, server_version: str, capabilities: Any):
+            self.server_name = server_name
+            self.server_version = server_version
+            self.capabilities = capabilities
+    
+    class Server:
+        def __init__(self, name: str):
+            self.name = name
+            self.tools = []
+            self._list_tools_func = None
+            self._call_tool_func = None
+        
+        def list_tools(self):
+            def decorator(func):
+                self._list_tools_func = func
+                return func
+            return decorator
+        
+        def call_tool(self):
+            def decorator(func):
+                self._call_tool_func = func
+                return func
+            return decorator
+        
+        def get_capabilities(self, notification_options=None, experimental_capabilities=None):
+            return {"tools": True}
+        
+        async def run(self, read_stream, write_stream, options):
+            print(f"简化MCP服务器 {self.name} 已启动")
+            print("注意: 这是一个简化实现，不提供完整的MCP协议支持")
+            # 简化实现，仅用于测试
+            await asyncio.sleep(1)
 
 from src.analyzer import CodeAnalyzer
 from src.config.analyzer_config import AnalyzerConfig
@@ -33,684 +98,205 @@ from src.cache.analysis_cache import AnalysisCache
 
 # 设置日志
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("tree-sitter-mcp-http-server")
+logger = logging.getLogger("tree-sitter-mcp-server")
 
-# MCP数据模型
-class MCPRequest(BaseModel):
-    jsonrpc: str = "2.0"
-    id: Optional[Union[str, int]] = None
-    method: str
-    params: Optional[Dict[str, Any]] = None
-
-class MCPResponse(BaseModel):
-    jsonrpc: str = "2.0"
-    id: Optional[Union[str, int]] = None
-    result: Optional[Any] = None
-    error: Optional[Dict[str, Any]] = None
-
-class MCPInitializeParams(BaseModel):
-    protocolVersion: str
-    capabilities: Dict[str, Any]
-    clientInfo: Dict[str, str]
-
-class TreeSitterMCPHTTPServer:
-    """Tree-Sitter MCP HTTP服务器"""
+class TreeSitterMCPServer:
+    """Tree-Sitter MCP服务器"""
     
     def __init__(self):
-        if not HTTP_AVAILABLE:
-            raise ImportError("FastAPI和Uvicorn未安装，无法启动HTTP服务器")
-        
-        self.app = FastAPI(
-            title="Tree-Sitter代码分析器",
-            description="基于Tree-Sitter的代码结构分析MCP服务器",
-            version="1.0.0",
-            docs_url="/docs",
-            redoc_url="/redoc"
-        )
-        
-        # 添加CORS中间件
-        self.app.add_middleware(
-            CORSMiddleware,
-            allow_origins=["*"],
-            allow_credentials=True,
-            allow_methods=["GET", "POST", "OPTIONS"],
-            allow_headers=["*"],
-            expose_headers=["*"]
-        )
-        
-        # 服务器状态
+        self.server = Server("tree-sitter-code-analyzer")
         self.analyzer = None
         self.mcp_tools = None
         self.kg_data = None
         self.detailed_index = None
         self.current_project_path = None
         
-        # MCP会话管理
-        self.initialized = False
-        self.client_capabilities = {}
-        self.server_capabilities = {
-            "tools": {}
-        }
-        
         # 初始化缓存管理器
         self.cache_manager = AnalysisCache()
         
-        # 注册路由
-        self._register_routes()
+        # 注册工具
+        self._register_tools()
     
-    def _register_routes(self):
-        """注册HTTP路由"""
+    def _register_tools(self):
+        """注册MCP工具"""
         
-        @self.app.get("/")
-        async def root():
-            """根路径，返回服务器信息"""
-            return {
-                "name": "Tree-Sitter代码分析器",
-                "version": "1.0.0",
-                "description": "基于Tree-Sitter的代码结构分析MCP服务器",
-                "mcp_version": "1.0.0",
-                "supported_tools": [
-                    "analyze_project",
-                    "get_project_overview",
-                    "get_type_info",
-                    "search_methods",
-                    "get_namespace_info", 
-                    "get_relationships",
-                    "get_method_details",
-                    "get_architecture_info",
-                    "list_all_types",
-                    "clear_cache",
-                    "get_cache_stats"
-                ]
-            }
-        
-        @self.app.get("/health")
-        async def health_check():
-            """健康检查端点"""
-            return {
-                "status": "healthy",
-                "timestamp": asyncio.get_event_loop().time(),
-                "cache_available": True,
-                "current_project": self.current_project_path
-            }
-        
-        @self.app.post("/mcp/call_tool")
-        async def call_tool(request: Request):
-            """MCP工具调用端点"""
-            try:
-                body = await request.json()
-                tool_name = body.get("name")
-                arguments = body.get("arguments", {})
-                
-                if not tool_name:
-                    raise HTTPException(status_code=400, detail="缺少工具名称")
-                
-                # 调用对应的工具
-                result = await self._handle_tool_call(tool_name, arguments)
-                
-                return {
-                    "success": True,
-                    "result": result,
-                    "tool": tool_name
-                }
-                
-            except Exception as e:
-                logger.error(f"工具调用错误 {tool_name}: {e}")
-                raise HTTPException(status_code=500, detail=f"工具执行错误: {str(e)}")
-        
-        @self.app.get("/mcp/tools")
-        async def list_tools():
-            """列出所有可用工具"""
-            return {
-                "tools": [
-                    {
-                        "name": "analyze_project",
-                        "description": "分析指定路径的代码项目，生成代码结构概览",
-                        "parameters": {
-                            "project_path": {"type": "string", "required": True, "description": "要分析的项目路径"},
-                            "language": {"type": "string", "default": "csharp", "description": "编程语言"},
-                            "compress": {"type": "boolean", "default": True, "description": "是否压缩输出"}
-                        }
-                    },
-                    {
-                        "name": "get_project_overview",
-                        "description": "获取当前项目的概览信息",
-                        "parameters": {}
-                    },
-                    {
-                        "name": "get_type_info",
-                        "description": "获取指定类型的详细信息",
-                        "parameters": {
-                            "type_name": {"type": "string", "required": True, "description": "类型名称"}
-                        }
-                    },
-                    {
-                        "name": "get_namespace_info",
-                        "description": "获取指定命名空间的详细信息",
-                        "parameters": {
-                            "namespace_name": {"type": "string", "required": True, "description": "命名空间名称"}
-                        }
-                    },
-                    {
-                        "name": "get_relationships",
-                        "description": "获取指定类型的关系信息",
-                        "parameters": {
-                            "type_name": {"type": "string", "required": True, "description": "类型名称"}
-                        }
-                    },
-                    {
-                        "name": "get_method_details",
-                        "description": "获取指定方法的详细信息",
-                        "parameters": {
-                            "class_name": {"type": "string", "required": True, "description": "类名"},
-                            "method_name": {"type": "string", "required": True, "description": "方法名"}
-                        }
-                    },
-                    {
-                        "name": "get_architecture_info",
-                        "description": "获取项目的架构设计信息",
-                        "parameters": {}
-                    },
-                    {
-                        "name": "list_all_types",
-                        "description": "列出项目中的所有类型",
-                        "parameters": {
-                            "type_filter": {"type": "string", "description": "类型过滤器"}
-                        }
-                    },
-                    {
-                        "name": "clear_cache",
-                        "description": "清除分析缓存",
-                        "parameters": {
-                            "project_path": {"type": "string", "description": "项目路径"},
-                            "language": {"type": "string", "default": "csharp", "description": "编程语言"}
-                        }
-                    },
-                    {
-                        "name": "get_cache_stats",
-                        "description": "获取缓存统计信息",
-                        "parameters": {}
+        @self.server.list_tools()
+        async def handle_list_tools() -> List[Tool]:
+            """列出所有可用的工具"""
+            return [
+                Tool(
+                    name="analyze_project",
+                    description="分析指定路径的C#项目，生成代码结构概览",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "project_path": {
+                                "type": "string",
+ "description": "要分析的项目路径"
+                            },
+                            "language": {
+                                "type": "string", 
+                                "description": "编程语言（默认csharp）",
+                                "default": "csharp"
+                            },
+                            "compress": {
+                                "type": "boolean",
+                                "description": "是否压缩输出（推荐true）",
+                                "default": True
+                            }
+                        },
+                        "required": ["project_path"]
                     }
-                ]
-            }
-        
-        @self.app.post("/analyze")
-        async def quick_analyze(request: Request):
-            """快速分析端点（简化接口）"""
-            try:
-                body = await request.json()
-                project_path = body.get("project_path")
-                language = body.get("language", "csharp")
-                compress = body.get("compress", True)
-                
-                if not project_path:
-                    raise HTTPException(status_code=400, detail="缺少project_path参数")
-                
-                result = await self._analyze_project({
-                    "project_path": project_path,
-                    "language": language,
-                    "compress": compress
-                })
-                
-                return {
-                    "success": True,
-                    "message": result["text"] if isinstance(result, dict) and "text" in result else str(result),
-                    "project_path": project_path,
-                    "language": language,
-                    "compress": compress
-                }
-                
-            except Exception as e:
-                logger.error(f"快速分析错误: {e}")
-                raise HTTPException(status_code=500, detail=f"分析失败: {str(e)}")
-        
-        @self.app.post("/analyze_stream")
-        @self.app.get("/analyze_stream")
-        @self.app.options("/analyze_stream")
-        async def analyze_stream(request: Request):
-            """流式分析端点（SSE支持）"""
-            # 处理OPTIONS预检请求
-            if request.method == "OPTIONS":
-                return JSONResponse(
-                    content={"message": "OK"},
-                    headers={
-                        "Access-Control-Allow-Origin": "*",
-                        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-                        "Access-Control-Allow-Headers": "*"
+                ),
+                Tool(
+                    name="get_project_overview", 
+                    description="获取当前项目的概览信息",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {}
                     }
-                )
-            
-            try:
-                # 处理GET请求（从查询参数获取）
-                if request.method == "GET":
-                    project_path = request.query_params.get("project_path")
-                    language = request.query_params.get("language", "csharp")
-                    compress = request.query_params.get("compress", "true").lower() == "true"
-                else:
-                    # 处理POST请求（从请求体获取）
-                    body = await request.json()
-                    project_path = body.get("project_path")
-                    language = body.get("language", "csharp")
-                    compress = body.get("compress", True)
-                
-                if not project_path:
-                    raise HTTPException(status_code=400, detail="缺少project_path参数")
-                
-                async def generate_events():
-                    try:
-                        # 发送开始事件
-                        start_data = {
-                            "type": "start",
-                            "message": f"开始分析项目: {project_path}"
-                        }
-                        yield f"data: {json.dumps(start_data, ensure_ascii=False)}\n\n"
-                        
-                        # 执行分析
-                        result = await self._analyze_project({
-                            "project_path": project_path,
-                            "language": language,
-                            "compress": compress
-                        })
-                        
-                        # 发送进度事件
-                        progress_data = {
-                            "type": "progress",
-                            "message": "分析完成",
-                            "progress": 100
-                        }
-                        yield f"data: {json.dumps(progress_data, ensure_ascii=False)}\n\n"
-                        
-                        # 发送结果事件
-                        result_data = {
-                            "type": "result",
-                            "success": True,
-                            "data": result
-                        }
-                        yield f"data: {json.dumps(result_data, ensure_ascii=False)}\n\n"
-                        
-                        # 发送完成事件
-                        complete_data = {
-                            "type": "complete",
-                            "message": "分析完成"
-                        }
-                        yield f"data: {json.dumps(complete_data, ensure_ascii=False)}\n\n"
-                        
-                    except Exception as e:
-                        # 发送错误事件
-                        error_data = {
-                            "type": "error",
-                            "message": str(e)
-                        }
-                        yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
-                
-                return StreamingResponse(
-                    generate_events(),
-                    media_type="text/event-stream",
-                    headers={
-                        "Cache-Control": "no-cache",
-                        "Connection": "keep-alive",
-                        "Access-Control-Allow-Origin": "*",
-                        "Access-Control-Allow-Headers": "*",
-                        "Access-Control-Allow-Methods": "GET, POST, OPTIONS"
+                ),
+                Tool(
+                    name="get_type_info",
+                    description="获取指定类型（类、接口等）的详细信息",
+                    inputSchema={
+                        "type": "object", 
+                        "properties": {
+                            "type_name": {
+                                "type": "string",
+                                "description": "类型名称（如User、UserService等）"
+                            }
+                        },
+                        "required": ["type_name"]
                     }
-                )
-                
-            except Exception as e:
-                logger.error(f"流式分析错误: {e}")
-                raise HTTPException(status_code=500, detail=f"分析失败: {str(e)}")
-        
-        @self.app.post("/sse")
-        @self.app.get("/sse")
-        @self.app.options("/sse")
-        async def mcp_sse_endpoint(request: Request):
-            """MCP over SSE 端点 - Cline兼容"""
-            # 处理OPTIONS预检请求
-            if request.method == "OPTIONS":
-                return JSONResponse(
-                    content={"message": "OK"},
-                    headers={
-                        "Access-Control-Allow-Origin": "*",
-                        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-                        "Access-Control-Allow-Headers": "*"
+                ),
+                Tool(
+                    name="get_namespace_info",
+                    description="获取指定命名空间的详细信息",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "namespace_name": {
+                                "type": "string",
+                                "description": "命名空间名称"
+                            }
+                        },
+                        "required": ["namespace_name"]
                     }
-                )
-            
-            async def mcp_event_stream():
-                """MCP事件流生成器"""
-                try:
-                    # 发送初始化事件
-                    init_event = {
-                        "jsonrpc": "2.0",
-                        "method": "notifications/initialized",
-                        "params": {
-                            "protocolVersion": "2024-11-05",
-                            "capabilities": self.server_capabilities,
-                            "serverInfo": {
-                                "name": "tree-sitter-code-analyzer",
-                                "version": "1.0.0"
+                ),
+                Tool(
+                    name="get_relationships",
+                    description="获取指定类型的关系信息（继承、使用等）",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "type_name": {
+                                "type": "string",
+                                "description": "类型名称"
+                            }
+                        },
+                        "required": ["type_name"]
+                    }
+                ),
+                Tool(
+                    name="get_method_details",
+                    description="获取指定方法的详细信息",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "class_name": {
+                                "type": "string",
+                                "description": "类名"
+                            },
+                            "method_name": {
+                                "type": "string", 
+                                "description": "方法名"
+                            }
+                        },
+                        "required": ["class_name", "method_name"]
+                    }
+                ),
+                Tool(
+                    name="get_architecture_info",
+                    description="获取项目的架构设计信息",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {}
+                    }
+                ),
+                Tool(
+                    name="list_all_types",
+                    description="列出项目中的所有类型",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "type_filter": {
+                                "type": "string",
+                                "description": "类型过滤器（class、interface、enum等，默认全部）"
                             }
                         }
                     }
-                    yield f"data: {json.dumps(init_event, ensure_ascii=False)}\n\n"
-                    
-                    # 保持连接活跃
-                    while True:
-                        # 发送心跳事件
-                        heartbeat = {
-                            "jsonrpc": "2.0",
-                            "method": "notifications/ping",
-                            "params": {"timestamp": asyncio.get_event_loop().time()}
-                        }
-                        yield f"data: {json.dumps(heartbeat, ensure_ascii=False)}\n\n"
-                        await asyncio.sleep(30)  # 收30秒发送一次心跳
-                        
-                except Exception as e:
-                    error_event = {
-                        "jsonrpc": "2.0",
-                        "error": {
-                            "code": -32603,
-                            "message": "Internal error",
-                            "data": str(e)
-                        }
-                    }
-                    yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
-            
-            return StreamingResponse(
-                mcp_event_stream(),
-                media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "Access-Control-Allow-Origin": "*",
-                    "Access-Control-Allow-Headers": "*",
-                    "Access-Control-Allow-Methods": "GET, POST, OPTIONS"
-                }
-            )
-        
-        @self.app.post("/message")
-        async def mcp_message_endpoint(request: Request):
-            """MCP消息处理端点"""
-            try:
-                body = await request.json()
-                mcp_request = MCPRequest(**body)
-                
-                # 处理初始化
-                if mcp_request.method == "initialize":
-                    params = MCPInitializeParams(**mcp_request.params)
-                    self.client_capabilities = params.capabilities
-                    self.initialized = True
-                    
-                    response = MCPResponse(
-                        id=mcp_request.id,
-                        result={
-                            "protocolVersion": "2024-11-05",
-                            "capabilities": self.server_capabilities,
-                            "serverInfo": {
-                                "name": "tree-sitter-code-analyzer",
-                                "version": "1.0.0"
+                ),
+                Tool(
+                    name="clear_cache",
+                    description="清除分析缓存（可指定项目或清除全部）",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "project_path": {
+                                "type": "string",
+                                "description": "要清除缓存的项目路径（不提供则清除全部缓存）"
+                            },
+                            "language": {
+                                "type": "string",
+                                "description": "编程语言（默认csharp）",
+                                "default": "csharp"
                             }
                         }
-                    )
-                    return response.dict(exclude_none=True)
-                
-                # 处理tools/list
-                elif mcp_request.method == "tools/list":
-                    tools = await self._get_mcp_tools_list()
-                    response = MCPResponse(
-                        id=mcp_request.id,
-                        result={"tools": tools}
-                    )
-                    return response.dict(exclude_none=True)
-                
-                # 处理tools/call
-                elif mcp_request.method == "tools/call":
-                    if not mcp_request.params:
-                        raise HTTPException(status_code=400, detail="缺少参数")
-                    
-                    tool_name = mcp_request.params.get("name")
-                    arguments = mcp_request.params.get("arguments", {})
-                    
-                    result = await self._handle_tool_call(tool_name, arguments)
-                    
-                    # 转换为MCP格式的响应
-                    mcp_result = self._convert_to_mcp_result(result)
-                    
-                    response = MCPResponse(
-                        id=mcp_request.id,
-                        result=mcp_result
-                    )
-                    return response.dict(exclude_none=True)
-                
-                else:
-                    # 未知方法
-                    response = MCPResponse(
-                        id=mcp_request.id,
-                        error={
-                            "code": -32601,
-                            "message": "Method not found",
-                            "data": f"未知方法: {mcp_request.method}"
-                        }
-                    )
-                    return response.dict(exclude_none=True)
-            
-            except Exception as e:
-                logger.error(f"MCP消息处理错误: {e}")
-                response = MCPResponse(
-                    id=getattr(mcp_request, 'id', None) if 'mcp_request' in locals() else None,
-                    error={
-                        "code": -32603,
-                        "message": "Internal error",
-                        "data": str(e)
+                    }
+                ),
+                Tool(
+                    name="get_cache_stats",
+                    description="获取缓存统计信息",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {}
                     }
                 )
-                return response.dict(exclude_none=True)
+            ]
+        
+        @self.server.call_tool()
+        async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> Sequence[Union[TextContent, ImageContent, EmbeddedResource]]:
+            """处理工具调用"""
+            try:
+                if name == "analyze_project":
+                    return await self._analyze_project(arguments)
+                elif name == "get_project_overview":
+                    return await self._get_project_overview(arguments)
+                elif name == "get_type_info":
+                    return await self._get_type_info(arguments)
+                elif name == "get_namespace_info":
+                    return await self._get_namespace_info(arguments)
+                elif name == "get_relationships":
+                    return await self._get_relationships(arguments)
+                elif name == "get_method_details":
+                    return await self._get_method_details(arguments)
+                elif name == "get_architecture_info":
+                    return await self._get_architecture_info(arguments)
+                elif name == "list_all_types":
+                    return await self._list_all_types(arguments)
+                elif name == "clear_cache":
+                    return await self._clear_cache(arguments)
+                elif name == "get_cache_stats":
+                    return await self._get_cache_stats(arguments)
+                else:
+                    return [TextContent(type="text", text=f"未知工具: {name}")]
+            
+            except Exception as e:
+                logger.error(f"工具调用错误 {name}: {e}")
+                return [TextContent(type="text", text=f"工具执行错误: {str(e)}")]
     
-    async def _handle_tool_call(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """处理工具调用"""
-        if name == "analyze_project":
-            return await self._analyze_project(arguments)
-        elif name == "get_project_overview":
-            return await self._get_project_overview(arguments)
-        elif name == "get_type_info":
-            return await self._get_type_info(arguments)
-        elif name == "get_namespace_info":
-            return await self._get_namespace_info(arguments)
-        elif name == "get_relationships":
-            return await self._get_relationships(arguments)
-        elif name == "get_method_details":
-            return await self._get_method_details(arguments)
-        elif name == "get_architecture_info":
-            return await self._get_architecture_info(arguments)
-        elif name == "list_all_types":
-            return await self._list_all_types(arguments)
-        elif name == "clear_cache":
-            return await self._clear_cache(arguments)
-        elif name == "get_cache_stats":
-            return await self._get_cache_stats(arguments)
-        else:
-            raise HTTPException(status_code=404, detail=f"未知工具: {name}")
-    
-    async def _get_mcp_tools_list(self) -> List[Dict[str, Any]]:
-        """获取MCP工具列表"""
-        return [
-            {
-                "name": "analyze_project",
-                "description": "分析指定路径的C#项目，生成代码结构概览",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "project_path": {
-                            "type": "string",
-                            "description": "要分析的项目路径"
-                        },
-                        "language": {
-                            "type": "string", 
-                            "description": "编程语言（默认csharp）",
-                            "default": "csharp"
-                        },
-                        "compress": {
-                            "type": "boolean",
-                            "description": "是否压缩输出（推荐true）",
-                            "default": True
-                        }
-                    },
-                    "required": ["project_path"]
-                }
-            },
-            {
-                "name": "get_project_overview",
-                "description": "获取当前项目的概览信息",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {}
-                }
-            },
-            {
-                "name": "get_type_info",
-                "description": "获取指定类型（类、接口等）的详细信息",
-                "inputSchema": {
-                    "type": "object", 
-                    "properties": {
-                        "type_name": {
-                            "type": "string",
-                            "description": "类型名称（如User、UserService等）"
-                        }
-                    },
-                    "required": ["type_name"]
-                }
-            },
-            {
-                "name": "get_namespace_info",
-                "description": "获取指定命名空间的详细信息",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "namespace_name": {
-                            "type": "string",
-                            "description": "命名空间名称"
-                        }
-                    },
-                    "required": ["namespace_name"]
-                }
-            },
-            {
-                "name": "get_relationships",
-                "description": "获取指定类型的关系信息（继承、使用等）",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "type_name": {
-                            "type": "string",
-                            "description": "类型名称"
-                        }
-                    },
-                    "required": ["type_name"]
-                }
-            },
-            {
-                "name": "get_method_details",
-                "description": "获取指定方法的详细信息",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "class_name": {
-                            "type": "string",
-                            "description": "类名"
-                        },
-                        "method_name": {
-                            "type": "string", 
-                            "description": "方法名"
-                        }
-                    },
-                    "required": ["class_name", "method_name"]
-                }
-            },
-            {
-                "name": "get_architecture_info",
-                "description": "获取项目的架构设计信息",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {}
-                }
-            },
-            {
-                "name": "list_all_types",
-                "description": "列出项目中的所有类型",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "type_filter": {
-                            "type": "string",
-                            "description": "类型过滤器（class、interface、enum等，默认全部）"
-                        }
-                    }
-                }
-            },
-            {
-                "name": "clear_cache",
-                "description": "清除分析缓存（可指定项目或清除全部）",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "project_path": {
-                            "type": "string",
-                            "description": "要清除缓存的项目路径（不提供则清除全部缓存）"
-                        },
-                        "language": {
-                            "type": "string",
-                            "description": "编程语言（默认csharp）",
-                            "default": "csharp"
-                        }
-                    }
-                }
-            },
-            {
-                "name": "get_cache_stats",
-                "description": "获取缓存统计信息",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {}
-                }
-            }
-        ]
-    
-    def _convert_to_mcp_result(self, result: Any) -> Dict[str, Any]:
-        """转换结果为MCP格式"""
-        if isinstance(result, dict) and "text" in result:
-            # 返回文本内容
-            return {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": result["text"]
-                    }
-                ],
-                "isError": False
-            }
-        elif isinstance(result, dict):
-            # 返回结构化数据
-            return {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": json.dumps(result, ensure_ascii=False, indent=2)
-                    }
-                ],
-                "isError": False
-            }
-        else:
-            # 返回其他类型
-            return {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": str(result)
-                    }
-                ],
-                "isError": False
-            }
-    
-    async def _analyze_project(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _analyze_project(self, args: Dict[str, Any]) -> Sequence[TextContent]:
         """分析项目（支持缓存）"""
         project_path = args.get("project_path", ".")
         language = args.get("language", "csharp")
@@ -762,8 +348,7 @@ class TreeSitterMCPHTTPServer:
                     overview = summaries.get('overview', '项目分析完成')
                     navigation = summaries.get('navigation', '导航索引生成完成')
                     
-                    return {
-                        "text": f"""# 🚀 项目分析完成！（使用缓存）
+                    response = f"""项目分析完成！（使用缓存）
 
 {overview}
 
@@ -771,23 +356,21 @@ class TreeSitterMCPHTTPServer:
 
 {navigation}
 
-## 📊 分析统计
+分析统计
 - 总节点数: {self.kg_data.get('statistics', {}).get('total_nodes', 0)}
 - 总关系数: {self.kg_data.get('statistics', {}).get('total_relationships', 0)}
 - 项目路径: {project_path}
 - 压缩模式: {'启用' if compress else '禁用'}
 
-## 💾 缓存信息
+缓存信息
 - 缓存时间: {cached_time}
 - 文件数量: {file_count}
-- 缓存状态: ✅ 有效
+- 缓存状态: 有效
 
-🎯 **现在可以使用API工具进行详细查询了！**
-""",
-                        "cached": True,
-                        "cache_time": cached_time,
-                        "statistics": self.kg_data.get('statistics', {})
-                    }
+现在可以使用上述工具进行详细查询了！
+"""
+                    
+                    return [TextContent(type="text", text=response)]
             
             # 需要重新分析
             logger.info("🔄 项目已改变，重新分析...")
@@ -810,7 +393,7 @@ class TreeSitterMCPHTTPServer:
                 result = self.analyzer.analyze()
                 
                 if not result['success']:
-                    raise HTTPException(status_code=500, detail=f"分析失败: {result.get('error', '未知错误')}")
+                    return [TextContent(type="text", text=f"分析失败: {result.get('error', '未知错误')}")]
                 
                 # 保存当前项目信息
                 self.current_project_path = project_path
@@ -843,8 +426,7 @@ class TreeSitterMCPHTTPServer:
                 
                 stats = result['statistics']
                 
-                return {
-                    "text": f"""# 项目分析完成！
+                response = f"""项目分析完成！
 
 {overview}
 
@@ -852,131 +434,438 @@ class TreeSitterMCPHTTPServer:
 
 {navigation}
 
-## 📊 分析统计
+分析统计
 - 总节点数: {stats['total_nodes']}
 - 总关系数: {stats['total_relationships']}
 - 项目路径: {project_path}
 - 压缩模式: {'启用' if compress else '禁用'}
 
-## 💾 缓存信息
-- 缓存状态: ✅ 已保存
+缓存信息
+- 缓存状态: 已保存
 - 下次分析将使用缓存（除非文件发生变化）
 
-🎯 **现在可以使用API工具进行详细查询了！**
-""",
-                    "cached": False,
-                    "statistics": stats
-                }
+现在可以使用上述工具进行详细查询了！
+"""
+                
+                return [TextContent(type="text", text=response)]
         
         except Exception as e:
-            logger.error(f"分析项目时发生错误: {e}")
-            raise HTTPException(status_code=500, detail=f"分析项目时发生错误: {str(e)}")
+            return [TextContent(type="text", text=f"分析项目时发生错误: {str(e)}")]
     
-    async def _get_project_overview(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _get_project_overview(self, args: Dict[str, Any]) -> Sequence[TextContent]:
         """获取项目概览"""
         if not self.kg_data:
-            raise HTTPException(status_code=400, detail="请先使用 analyze_project 分析项目")
+            return [TextContent(type="text", text="请先使用 analyze_project 工具分析项目")]
         
         stats = self.kg_data.get('statistics', {})
         node_types = stats.get('node_types', {})
         
-        overview_text = f"""# 📋 项目概览
+        overview = f"""项目概览
 
-**项目路径**: {self.current_project_path or '未知'}
+项目路径: {self.current_project_path or '未知'}
 
-## 📊 代码统计
+代码统计
 """
         
         for node_type, count in node_types.items():
-            overview_text += f"- {node_type}: {count}个\n"
+            overview += f"- {node_type}: {count}个\n"
         
-        overview_text += f"\n**总计**: {stats.get('total_nodes', 0)}个代码元素，{stats.get('total_relationships', 0)}个关系"
+        overview += f"\n总计: {stats.get('total_nodes', 0)}个代码元素，{stats.get('total_relationships', 0)}个关系"
         
-        return {
-            "text": overview_text,
-            "statistics": stats,
-            "project_path": self.current_project_path
-        }
+        return [TextContent(type="text", text=overview)]
     
-    # 复用其他方法的实现...
-    async def _get_type_info(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _get_type_info(self, args: Dict[str, Any]) -> Sequence[TextContent]:
         """获取类型信息"""
         if not self.mcp_tools:
-            raise HTTPException(status_code=400, detail="请先使用 analyze_project 分析项目")
+            return [TextContent(type="text", text="请先使用 analyze_project 工具分析项目")]
         
         type_name = args.get("type_name")
         result = self.mcp_tools.get_type_info(type_name)
         
-        if 'error' in result:
-            raise HTTPException(status_code=404, detail=result['error'])
+        # 如果是获取所有类型
+        if 'all_types' in result:
+            response = "所有类型列表:\n\n"
+            types_by_category = {}
+            
+            # 按类型分组
+            for name, type_info in result['all_types'].items():
+                type_category = type_info['type']
+                if type_category not in types_by_category:
+                    types_by_category[type_category] = []
+                types_by_category[type_category].append(type_info)
+            
+            # 显示各类型
+            for category, types in types_by_category.items():
+                response += f"{category.capitalize()}类型:\n"
+                for type_info in types:
+                    modifiers = type_info.get('modifiers', [])
+                    modifiers_str = ' '.join(modifiers) + ' ' if modifiers else ''
+                    response += f"  {modifiers_str}{type_info['name']}\n"
+                response += "\n"
+            
+            return [TextContent(type="text", text=response)]
         
-        return result
+        if 'error' in result:
+            return [TextContent(type="text", text=f"{result['error']}")]
+        
+        # 格式化输出，将修饰符集成到类名前面
+        modifiers = result.get('modifiers', [])
+        modifiers_str = ' '.join(modifiers) + ' ' if modifiers else ''
+        type_display = f"{modifiers_str}{result['type']}"
+        
+        response = f"{type_display.capitalize()}: {result['name']}\n"
+        
+        # 基本信息
+        if result.get('base_types'):
+            response += f"继承自: {', '.join(result['base_types'])}\n"
+        
+        if result.get('is_generic'):
+            response += f"泛型: 是\n"
+        
+        response += "\n成员信息:\n"
+        
+        # 成员详情
+        members = result.get('members', {})
+        
+        if members.get('constructors'):
+            response += "\n构造函数:\n"
+            for ctor in members['constructors']:
+                signature = ctor.get('signature', f"{ctor['name']}()")
+                modifiers = ctor.get('modifiers', [])
+                modifier_str = ' '.join(modifiers) + ' ' if modifiers else ''
+                response += f"  {modifier_str}{signature}\n"
+        
+        if members.get('methods'):
+            response += "\n方法:\n"
+            for method in members['methods']:
+                signature = method.get('signature', f"{method['name']}()")
+                modifiers = method.get('modifiers', [])
+                modifier_str = ' '.join(modifiers) + ' ' if modifiers else ''
+                response += f"  {modifier_str}{signature}\n"
+        
+        if members.get('properties'):
+            response += "\n属性:\n"
+            for prop in members['properties']:
+                response += f"  {prop['name']}: {prop.get('type', 'unknown')}\n"
+        
+        if members.get('fields'):
+            response += "\n字段:\n"
+            for field in members['fields']:
+                response += f"  {field['name']}: {field.get('type', 'unknown')}\n"
+        
+        return [TextContent(type="text", text=response)]
     
-    async def _get_namespace_info(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _search_methods(self, args: Dict[str, Any]) -> Sequence[TextContent]:
+        """搜索方法"""
+        if not self.mcp_tools:
+            return [TextContent(type="text", text="请先使用 analyze_project 工具分析项目")]
+        
+        keyword = args.get("keyword")
+        limit = args.get("limit", 10)
+        
+        result = self.mcp_tools.search_methods(keyword, limit)
+        
+        response = f"# 🔍 搜索结果: '{keyword}'\n\n"
+        response += f"找到 {result['total_found']} 个相关方法\n\n"
+        
+        if result['methods']:
+            response += "## 📋 匹配的方法\n\n"
+            for i, method in enumerate(result['methods'], 1):
+                response += f"### {i}. {method['class']}.{method['method']['name']}\n"
+                response += f"**签名**: {method['signature']}\n"
+                operations = ', '.join(method['method'].get('operations', []))
+                if operations:
+                    response += f"**操作**: {operations}\n"
+                if method.get('context'):
+                    response += f"**上下文**: {method['context']}\n"
+                response += "\n"
+        else:
+            response += "❌ 未找到匹配的方法"
+        
+        return [TextContent(type="text", text=response)]
+    
+    async def _get_namespace_info(self, args: Dict[str, Any]) -> Sequence[TextContent]:
         """获取命名空间信息"""
         if not self.mcp_tools:
-            raise HTTPException(status_code=400, detail="请先使用 analyze_project 分析项目")
+            return [TextContent(type="text", text="请先使用 analyze_project 工具分析项目")]
         
         namespace_name = args.get("namespace_name")
-        if not namespace_name:
-            raise HTTPException(status_code=400, detail="缺少 namespace_name 参数")
-        
         result = self.mcp_tools.get_namespace_info(namespace_name)
         
         if 'error' in result:
-            raise HTTPException(status_code=404, detail=result['error'])
+            return [TextContent(type="text", text=f"{result['error']}")]
         
-        return result
+        response = f"命名空间: {result['namespace']}\n\n"
+        response += f"{result['summary']}\n\n"
+        
+        if result['types_detail']:
+            response += "包含的类型:\n\n"
+            
+            # 按methods数量排序类型
+            sorted_types = sorted(
+                result['types_detail'], 
+                key=lambda x: x.get('member_counts', {}).get('methods', 0), 
+                reverse=True
+            )
+            
+            for type_info in sorted_types:
+                response += f"{type_info['type'].capitalize()}: {type_info['name']}\n"
+                if type_info.get('modifiers'):
+                    response += f"  修饰符: {', '.join(type_info['modifiers'])}\n"
+                
+                member_counts = type_info.get('member_counts', {})
+                if member_counts:
+                    counts = [f"{k}: {v}" for k, v in member_counts.items() if v > 0]
+                    if counts:
+                        response += f"  成员: {', '.join(counts)}\n"
+                response += "\n"
+        
+        return [TextContent(type="text", text=response)]
     
-    async def _get_relationships(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _get_relationships(self, args: Dict[str, Any]) -> Sequence[TextContent]:
         """获取关系信息"""
         if not self.mcp_tools:
-            raise HTTPException(status_code=400, detail="请先使用 analyze_project 分析项目")
+            return [TextContent(type="text", text="请先使用 analyze_project 工具分析项目")]
         
-        type_name = args.get("type_name")  # 可以为None
+        type_name = args.get("type_name")
         result = self.mcp_tools.get_relationships(type_name)
         
-        if 'error' in result:
-            raise HTTPException(status_code=404, detail=result['error'])
+        # 如果是获取所有关系
+        if 'all_relationships' in result:
+            response = "所有继承和使用关系:\n\n"
+            all_relationships = result['all_relationships']
+            
+            # 显示继承关系
+            if all_relationships['inherits_from']:
+                response += "继承关系:\n"
+                for rel in all_relationships['inherits_from'][:20]:  # 限制显示数量
+                    response += f"  {rel['from']} -> {rel['to']} ({rel['type']})\n"
+                if len(all_relationships['inherits_from']) > 20:
+                    response += f"  ... 还有 {len(all_relationships['inherits_from']) - 20} 个继承关系\n"
+                response += "\n"
+            
+            # 显示使用关系
+            if all_relationships['uses']:
+                response += "使用关系:\n"
+                for rel in all_relationships['uses'][:20]:  # 限制显示数量
+                    response += f"  {rel['from']} -> {rel['to']} ({rel['type']})\n"
+                if len(all_relationships['uses']) > 20:
+                    response += f"  ... 还有 {len(all_relationships['uses']) - 20} 个使用关系\n"
+                response += "\n"
+            
+            return [TextContent(type="text", text=response)]
         
-        return result
+        if 'error' in result:
+            return [TextContent(type="text", text=f"{result['error']}")]
+        
+        response = f"{result['type_name']} 的关系图\n\n"
+        response += f"总结: {result['summary']}\n\n"
+        
+        relationships = result['relationships']
+        
+        for rel_type, targets in relationships.items():
+            if targets:
+                rel_name_map = {
+                    'inherits_from': '继承自',
+                    'inherited_by': '被继承', 
+                    'uses': '使用',
+                    'used_by': '被使用',
+                    'contains': '包含',
+                    'contained_in': '位于'
+                }
+                
+                response += f"{rel_name_map.get(rel_type, rel_type)}:\n"
+                for target in targets:
+                    response += f"  {target}\n"
+                response += "\n"
+        
+        return [TextContent(type="text", text=response)]
     
-    async def _get_method_details(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _get_method_details(self, args: Dict[str, Any]) -> Sequence[TextContent]:
         """获取方法详情"""
         if not self.mcp_tools:
-            raise HTTPException(status_code=400, detail="请先使用 analyze_project 分析项目")
+            return [TextContent(type="text", text="请先使用 analyze_project 工具分析项目")]
         
         class_name = args.get("class_name")
         method_name = args.get("method_name")
         
-        if not class_name or not method_name:
-            raise HTTPException(status_code=400, detail="缺少 class_name 或 method_name 参数")
-        
         result = self.mcp_tools.get_method_details(class_name, method_name)
         
         if 'error' in result:
-            raise HTTPException(status_code=404, detail=result['error'])
+            return [TextContent(type="text", text=f"❌ {result['error']}")]
         
-        return result
+        response = f"# 🔧 方法详情: {result['class']}.{result['method_name']}\n\n"
+        
+        response += f"**签名**: {result['signature']}\n"
+        response += f"**返回类型**: {result['return_type']}\n"
+        
+        if result.get('modifiers'):
+            response += f"**修饰符**: {', '.join(result['modifiers'])}\n"
+        
+        operations = result.get('operations', [])
+        if operations:
+            response += f"**操作类型**: {', '.join(operations)}\n"
+        
+        response += "\n## 📋 参数\n\n"
+        parameters = result.get('parameters', [])
+        if parameters:
+            for param in parameters:
+                param_type = param.get('type', 'unknown')
+                param_name = param.get('name', 'unknown') 
+                param_mods = param.get('modifiers', [])
+                mod_str = f" ({', '.join(param_mods)})" if param_mods else ""
+                response += f"- **{param_name}**: {param_type}{mod_str}\n"
+        else:
+            response += "无参数\n"
+        
+        response += "\n## 🏷️ 特性\n\n"
+        characteristics = result.get('characteristics', {})
+        for key, value in characteristics.items():
+            if value:
+                key_map = {
+                    'is_abstract': '抽象方法',
+                    'is_virtual': '虚方法',
+                    'is_override': '重写方法',
+                    'is_static': '静态方法',
+                    'is_public': '公共方法'
+                }
+                response += f"✅ {key_map.get(key, key)}\n"
+        
+        suggestions = result.get('usage_suggestions', [])
+        if suggestions:
+            response += "\n## 💡 使用建议\n\n"
+            for suggestion in suggestions:
+                response += f"- {suggestion}\n"
+        
+        return [TextContent(type="text", text=response)]
     
-    async def _get_architecture_info(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _get_architecture_info(self, args: Dict[str, Any]) -> Sequence[TextContent]:
         """获取架构信息"""
         if not self.mcp_tools:
-            raise HTTPException(status_code=400, detail="请先使用 analyze_project 分析项目")
+            return [TextContent(type="text", text="请先使用 analyze_project 工具分析项目")]
         
         result = self.mcp_tools.get_architecture_info()
         
         if 'error' in result:
-            raise HTTPException(status_code=500, detail=result['error'])
+            return [TextContent(type="text", text=f"❌ {result['error']}")]
         
-        return result
+        response = "系统架构分析\n\n"
+        
+        # 架构概要
+        response += f"架构概要\n{result.get('architecture_summary', '')}"
+        
+        # 命名空间层次
+        namespaces = result.get('namespace_hierarchy', {})
+        if namespaces:
+            response += "\n\n命名空间层次\n"
+            for ns, info in namespaces.items():
+                response += f"\n{ns} ({info['total_types']}个类型)\n"
+                for type_name, types in info['types'].items():
+                    if types:
+                        response += f"- {type_name}: {', '.join(types[:5])}"
+                        if len(types) > 5:
+                            response += f" 等{len(types)}个"
+                        response += "\n"
+        
+        # 类依赖关系
+        dependencies = result.get('class_dependencies', {})
+        if dependencies:
+            response += "\n类依赖关系\n"
+            for class_name, deps in list(dependencies.items())[:8]:  # 只显示前8个
+                response += f"\n{class_name}\n"
+                for dep in deps[:5]:  # 每个类只显示前5个依赖
+                    response += f"- {dep}\n"
+        
+        # 接口实现
+        implementations = result.get('interface_implementations', {})
+        if implementations:
+            response += "\n接口实现关系\n"
+            for interface, implementers in implementations.items():
+                response += f"\n{interface}\n"
+                response += f"实现类: {', '.join(implementers)}\n"
+        
+        # 继承关系
+        inheritance = result.get('inheritance_chains', {})
+        base_classes = inheritance.get('base_classes', {})
+        if base_classes:
+            response += "\n继承关系\n"
+            for base_class, derived_classes in list(base_classes.items())[:5]:  # 只显示前5个
+                response += f"\n{base_class} 基类\n"
+                response += f"派生类: {', '.join(derived_classes)}\n"
+        
+        # 组合关系  
+        composition = result.get('composition_relationships', {})
+        if composition:
+            response += "\n组合关系\n"
+            for container, contained in list(composition.items())[:5]:  # 只显示前5个
+                response += f"\n{container}\n"
+                response += f"包含: {', '.join(contained[:5])}\n"
+                if len(contained) > 5:
+                    response += f"等{len(contained)}个组件\n"
+        
+        # 如果没有找到任何类型，显示调试信息
+        debug_info = result.get('debug_info', {})
+        if debug_info and all(info['total_types'] == 0 for info in result.get('namespace_hierarchy', {}).values()):
+            response += "\n调试信息\n"
+            response += "检测到所有命名空间都显示0个类型，以下是调试信息：\n\n"
+            
+            sample_nodes = debug_info.get('sample_nodes', [])
+            if sample_nodes:
+                response += "节点样本:\n"
+                for node in sample_nodes:
+                    response += f"- {node['type']}: {node['name']} (ID: {node['id']})\n"
+            
+            node_id_patterns = debug_info.get('node_id_patterns', [])
+            if node_id_patterns:
+                response += f"\nID模式: {', '.join(node_id_patterns[:5])}\n"
+            
+            metadata_samples = debug_info.get('metadata_samples', [])
+            if metadata_samples:
+                response += "\nMetadata结构:\n"
+                for meta in metadata_samples:
+                    response += f"- {meta['node_name']} ({meta['node_type']}): {', '.join(meta['metadata_keys'])}\n"
+            
+            # 新增: 命名空间分析调试
+            ns_analysis = debug_info.get('namespace_analysis', {})
+            if ns_analysis:
+                response += "\n命名空间分析:\n"
+                response += f"- 总命名空间数: {ns_analysis.get('total_namespaces', 0)}\n"
+                response += f"- 总类数: {ns_analysis.get('total_classes', 0)}\n"
+                
+                ns_samples = ns_analysis.get('namespace_samples', [])
+                if ns_samples:
+                    response += "\n命名空间样本:\n"
+                    for ns in ns_samples:
+                        response += f"- {ns['name']} (ID: {ns['id']})\n"
+                
+                class_samples = ns_analysis.get('class_samples', [])
+                if class_samples:
+                    response += "\n类样本:\n"
+                    for cls in class_samples:
+                        response += f"- {cls['name']} (ID: {cls['id']})\n"
+                
+                matching_attempts = ns_analysis.get('id_matching_attempts', [])
+                if matching_attempts:
+                    response += "\nID匹配尝试:\n"
+                    for attempt in matching_attempts:
+                        response += f"- 类 {attempt['class_name']} (ID: {attempt['class_id']})\n"
+                        if attempt['potential_namespace_ids']:
+                            response += f"  潜在命名空间ID: {', '.join(attempt['potential_namespace_ids'])}\n"
+                        if attempt['matched_namespaces']:
+                            response += f"  匹配的命名空间: {', '.join(attempt['matched_namespaces'])}\n"
+                        else:
+                            response += "  未找到匹配的命名空间\n"
+        
+        return [TextContent(type="text", text=response)]
     
-    async def _list_all_types(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _list_all_types(self, args: Dict[str, Any]) -> Sequence[TextContent]:
         """列出所有类型"""
         if not self.kg_data:
-            raise HTTPException(status_code=400, detail="请先使用 analyze_project 分析项目")
+            return [TextContent(type="text", text="请先使用 analyze_project 工具分析项目")]
         
         type_filter = args.get("type_filter", "").lower()
+        
+        response = "项目中的所有类型\n\n"
         
         # 按类型分组
         types_by_category = {}
@@ -994,13 +883,32 @@ class TreeSitterMCPHTTPServer:
                 
                 types_by_category[node_type].append(node)
         
-        return {
-            "types_by_category": types_by_category,
-            "total_types": sum(len(types) for types in types_by_category.values()),
-            "type_filter": type_filter
-        }
+        for type_name, types in types_by_category.items():
+            response += f"{type_name.capitalize()}s ({len(types)}个)\n\n"
+            
+            for type_node in types:
+                response += f"- {type_node['name']}"
+                
+                # 添加修饰符信息
+                modifiers = type_node.get('metadata', {}).get('modifiers', [])
+                if modifiers:
+                    response += f" ({', '.join(modifiers)})"
+                
+                # 添加继承信息
+                base_types = type_node.get('metadata', {}).get('base_types', [])
+                if base_types:
+                    response += f" 继承自: {', '.join(base_types)}"
+                
+                response += "\n"
+            
+            response += "\n"
+        
+        if not types_by_category:
+            response += "未找到匹配的类型"
+        
+        return [TextContent(type="text", text=response)]
     
-    async def _clear_cache(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _clear_cache(self, args: Dict[str, Any]) -> Sequence[TextContent]:
         """清除缓存"""
         project_path = args.get("project_path")
         language = args.get("language", "csharp")
@@ -1009,37 +917,60 @@ class TreeSitterMCPHTTPServer:
             if project_path:
                 # 清除特定项目缓存
                 self.cache_manager.clear_cache(project_path, language)
-                message = f"🗑️ 已清除项目缓存: {project_path}"
+                response = f"已清除项目缓存: {project_path}"
             else:
                 # 清除所有缓存
                 self.cache_manager.clear_cache()
-                message = "🗑️ 已清除所有缓存"
+                response = "已清除所有缓存"
             
-            return {"message": message, "success": True}
+            return [TextContent(type="text", text=response)]
             
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"清除缓存失败: {str(e)}")
+            return [TextContent(type="text", text=f"清除缓存失败: {str(e)}")]
     
-    async def _get_cache_stats(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _get_cache_stats(self, args: Dict[str, Any]) -> Sequence[TextContent]:
         """获取缓存统计信息"""
         try:
             stats = self.cache_manager.get_cache_stats()
             
             if 'error' in stats:
-                raise HTTPException(status_code=500, detail=f"获取缓存统计失败: {stats['error']}")
+                return [TextContent(type="text", text=f"获取缓存统计失败: {stats['error']}")]
             
-            return stats
+            # 格式化文件大小
+            total_size = stats.get('total_size', 0)
+            if total_size > 1024 * 1024:  # MB
+                size_str = f"{total_size / (1024 * 1024):.1f} MB"
+            elif total_size > 1024:  # KB
+                size_str = f"{total_size / 1024:.1f} KB"
+            else:
+                size_str = f"{total_size} 字节"
+            
+            response = f"""# 💾 缓存统计信息
+
+## 📊 概览
+- 缓存项目数: {stats.get('cached_projects', 0)}
+- 缓存总大小: {size_str}
+- 缓存目录: {stats.get('cache_dir', 'N/A')}
+
+## 📁 缓存项目列表
+"""
+            
+            projects = stats.get('projects', [])
+            if projects:
+                for i, project_key in enumerate(projects, 1):
+                    response += f"{i}. {project_key}\n"
+            else:
+                response += "ℹ️ 暂无缓存项目"
+            
+            response += "\n\n💡 **提示**: 使用 `clear_cache` 工具可以清除缓存"
+            
+            return [TextContent(type="text", text=response)]
             
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"获取缓存统计失败: {str(e)}")
-
-def create_app() -> FastAPI:
-    """创建FastAPI应用"""
-    server = TreeSitterMCPHTTPServer()
-    return server.app
+            return [TextContent(type="text", text=f"获取缓存统计失败: {str(e)}")]
 
 def main():
-    """HTTP服务器主入口"""
+    """MCP服务器主入口 (HTTP版本)"""
     # 设置控制台输出编码
     import os
     os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
@@ -1050,28 +981,62 @@ def main():
     if hasattr(sys.stderr, 'reconfigure'):
         sys.stderr.reconfigure(encoding='utf-8')
     
-    if not HTTP_AVAILABLE:
-        print("❌ FastAPI和Uvicorn未安装")
-        print("📦 安装方法: pip install fastapi uvicorn")
-        return
+    server_instance = TreeSitterMCPServer()
     
-    print("🚀 启动Tree-Sitter MCP HTTP服务器...")
-    
-    try:
-        server = TreeSitterMCPHTTPServer()
+    if MCP_AVAILABLE:
+        # 使用标准MCP协议 over SSE
+        sse = SseServerTransport("/messages/")
         
-        # 运行服务器
-        uvicorn.run(
-            server.app,
-            host="127.0.0.1",
-            port=8002,
-            log_level="info",
-            reload=False
-        )
+        async def handle_sse(request):
+            async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
+                await server_instance.server.run(
+                    streams[0],
+                    streams[1],
+                    InitializationOptions(
+                        server_name="tree-sitter-code-analyzer",
+                        server_version="1.0.0",
+                        capabilities={}
+                    )
+                )
+            return Response()  # 避免 NoneType 错误
         
-    except Exception as e:
-        logger.error(f"服务器启动失败: {e}")
-        print(f"❌ 服务器启动失败: {e}")
+        routes = [
+            Route("/mcp", endpoint=handle_sse, methods=["GET"]),
+            Mount("/messages/", app=sse.handle_post_message),
+        ]
+        
+        app = Starlette(routes=routes)
+        
+        print("🚀 HTTP MCP服务器启动中...")
+        print("📍 访问端点: http://127.0.0.1:3000/mcp")
+        print("💡 使用MCP客户端连接进行工具调用")
+        
+        uvicorn.run(app, host="127.0.0.1", port=3000)
+    else:
+        # 简化实现模式
+        print("🚀 Tree-Sitter代码分析器 (简化模式)")
+        print("📝 要获得完整MCP协议支持，请安装: pip install mcp==1.0.0")
+        print("⚡ 服务器功能已就绪，可以通过程序接口调用")
+        
+        # 在简化模式下，可以提供一个基本的命令行接口用于测试
+        async def simple_demo():
+            print("\n🔍 运行简单演示...")
+            try:
+                # 演示分析示例项目
+                result = await server_instance._analyze_project({
+                    "project_path": "examples",
+                    "compress": True
+                })
+                
+                if result and len(result) > 0:
+                    print("✅ 演示分析成功!")
+                    print(result[0].text[:300] + "..." if len(result[0].text) > 300 else result[0].text)
+                else:
+                    print("❌ 演示分析失败")
+            except Exception as e:
+                print(f"❌ 演示出错: {e}")
+        
+        asyncio.run(simple_demo())
 
 if __name__ == "__main__":
     main()
