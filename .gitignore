@@ -13,6 +13,8 @@ ENV/
 .venv
 *.virtualenv
 
+workspace/
+
 # Python 缓存和编译文件
 __pycache__/
 *.py[cod]

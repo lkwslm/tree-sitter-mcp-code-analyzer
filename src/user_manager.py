@@ -6,9 +6,11 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 from dataclasses import dataclass, asdict
 from pathlib import Path
+
+from .gitlab_puller import GitLabPuller
 
 logger = logging.getLogger("user-manager")
 
@@ -44,15 +46,17 @@ class UserHeaders:
 class UserManager:
     """用户管理类，负责用户 headers 信息的持久化和管理"""
     
-    def __init__(self, storage_file: str = "./user_headers.json"):
+    def __init__(self, storage_file: str = "./user_headers.json", workspace_root: str = "./workspace"):
         """
         初始化用户管理器
         
         Args:
             storage_file: 存储文件路径，默认为 user_headers.json
+            workspace_root: 工作空间根目录，默认为 ./workspace
         """
         self.storage_file = Path(storage_file)
         self._users: Dict[str, UserHeaders] = {}
+        self.gitlab_puller = GitLabPuller(workspace_root)
         self._load_users()
     
     def _load_users(self) -> None:
@@ -281,3 +285,240 @@ class UserManager:
         except Exception as e:
             logger.error(f"导入用户数据失败: {e}")
             return False
+    
+    def sync_user_repository(self, username: str) -> Tuple[bool, str, Path]:
+        """
+        同步指定用户的 GitLab 仓库
+        
+        Args:
+            username: 用户名
+            
+        Returns:
+            Tuple[bool, str, Path]: (是否成功, 消息, 本地路径)
+        """
+        user = self.get_user(username)
+        if not user:
+            return False, f"用户 {username} 不存在", Path()
+        
+        try:
+            # 将用户数据转换为字典格式
+            user_headers = user.to_dict()
+            success, message, local_path = self.gitlab_puller.sync_repository(user_headers)
+            
+            if success:
+                logger.info(f"用户 {username} 的仓库同步成功: {message}")
+            else:
+                logger.error(f"用户 {username} 的仓库同步失败: {message}")
+            
+            return success, message, local_path
+        except Exception as e:
+            error_msg = f"同步用户 {username} 仓库时发生错误: {str(e)}"
+            logger.error(error_msg)
+            return False, error_msg, Path()
+    
+    def sync_user_repository_async(self, username: str, callback=None) -> str:
+        """
+        异步同步指定用户的 GitLab 仓库
+        
+        Args:
+            username: 用户名
+            callback: 完成时的回调函数
+            
+        Returns:
+            str: 任务ID
+        """
+        user = self.get_user(username)
+        if not user:
+            raise ValueError(f"用户 {username} 不存在")
+        
+        try:
+            # 将用户数据转换为字典格式
+            user_headers = user.to_dict()
+            task_id = self.gitlab_puller.sync_repository_async(user_headers, callback)
+            
+            logger.info(f"启动用户 {username} 的异步仓库同步任务，任务ID: {task_id}")
+            return task_id
+            
+        except Exception as e:
+            error_msg = f"启动用户 {username} 异步仓库同步时发生错误: {str(e)}"
+            logger.error(error_msg)
+            raise
+    
+    def get_sync_task_status(self, task_id: str):
+        """
+        获取异步同步任务状态
+        
+        Args:
+            task_id: 任务ID
+            
+        Returns:
+            任务状态信息
+        """
+        return self.gitlab_puller.get_task_status(task_id)
+    
+    def get_all_sync_tasks(self):
+        """
+        获取所有异步同步任务
+        
+        Returns:
+            所有任务状态信息
+        """
+        return self.gitlab_puller.get_all_tasks()
+    
+    def cancel_sync_task(self, task_id: str) -> bool:
+        """
+        取消异步同步任务
+        
+        Args:
+            task_id: 任务ID
+            
+        Returns:
+            bool: 是否成功取消
+        """
+        return self.gitlab_puller.cancel_task(task_id)
+    
+    def sync_all_users_repositories(self) -> Dict[str, Tuple[bool, str, Path]]:
+        """
+        同步所有用户的 GitLab 仓库
+        
+        Returns:
+            Dict[str, Tuple[bool, str, Path]]: 每个用户的同步结果
+        """
+        results = {}
+        
+        for username in self._users.keys():
+            try:
+                success, message, local_path = self.sync_user_repository(username)
+                results[username] = (success, message, local_path)
+            except Exception as e:
+                error_msg = f"同步用户 {username} 时发生错误: {str(e)}"
+                logger.error(error_msg)
+                results[username] = (False, error_msg, Path())
+        
+        return results
+    
+    def get_user_repository_info(self, username: str) -> Dict[str, Any]:
+        """
+        获取用户仓库信息
+        
+        Args:
+            username: 用户名
+            
+        Returns:
+            Dict[str, Any]: 仓库信息，如果用户不存在则返回空字典
+        """
+        user = self.get_user(username)
+        if not user:
+            return {}
+        
+        try:
+            from .gitlab_puller import GitLabRepoInfo
+            
+            # 创建仓库信息对象
+            repo_info = GitLabRepoInfo(
+                username=user.username,
+                git_token=user.git_token,
+                repo_url=user.repo,
+                branch=user.branch
+            )
+            
+            repo_uri = repo_info.get_repo_uri()
+            return self.gitlab_puller.get_repository_info(username, repo_info.repo_name)
+        except Exception as e:
+            logger.error(f"获取用户 {username} 仓库信息失败: {e}")
+            return {}
+    
+    def list_user_repositories(self, username: str) -> List[Dict[str, Any]]:
+        """
+        列出用户的所有仓库
+        
+        Args:
+            username: 用户名
+            
+        Returns:
+            List[Dict[str, Any]]: 仓库列表
+        """
+        try:
+            return self.gitlab_puller.list_user_repositories(username)
+        except Exception as e:
+            logger.error(f"列出用户 {username} 仓库失败: {e}")
+            return []
+    
+    def cleanup_user_repositories(self, username: str, keep_recent: int = 5) -> int:
+        """
+        清理用户的旧仓库
+        
+        Args:
+            username: 用户名
+            keep_recent: 保留最近的仓库数量
+            
+        Returns:
+            int: 清理的仓库数量
+        """
+        try:
+            cleaned_count = self.gitlab_puller.cleanup_user_repositories(username, keep_recent)
+            logger.info(f"为用户 {username} 清理了 {cleaned_count} 个旧仓库")
+            return cleaned_count
+        except Exception as e:
+            logger.error(f"清理用户 {username} 仓库失败: {e}")
+            return 0
+    
+    def add_or_update_user_with_sync(self, headers_data: Dict[str, Any], auto_sync: bool = True) -> Tuple[UserHeaders, bool, str, Path]:
+        """
+        添加或更新用户信息，并可选择自动同步仓库
+        
+        Args:
+            headers_data: 从 SSE wrapper 提取的 headers 数据
+            auto_sync: 是否自动同步仓库
+            
+        Returns:
+            Tuple[UserHeaders, bool, str, Path]: (用户对象, 同步是否成功, 同步消息, 本地路径)
+        """
+        # 先添加或更新用户
+        user = self.add_or_update_user(headers_data)
+        
+        # 如果启用自动同步且用户设置了同步标志
+        if auto_sync and headers_data.get('sync', False):
+            try:
+                sync_success, sync_message, local_path = self.sync_user_repository(user.username)
+                return user, sync_success, sync_message, local_path
+            except Exception as e:
+                error_msg = f"自动同步失败: {str(e)}"
+                logger.error(error_msg)
+                return user, False, error_msg, Path()
+        else:
+            return user, True, "用户信息已更新（未启用同步）", Path()
+    
+    def get_workspace_summary(self) -> Dict[str, Any]:
+        """
+        获取工作空间摘要信息
+        
+        Returns:
+            Dict[str, Any]: 工作空间摘要
+        """
+        summary = {
+            'total_users': len(self._users),
+            'workspace_root': str(self.gitlab_puller.workspace_root),
+            'users_with_repos': 0,
+            'total_repositories': 0,
+            'users_summary': []
+        }
+        
+        for username, user in self._users.items():
+            user_repos = self.list_user_repositories(username)
+            user_info = {
+                'username': username,
+                'repo_url': user.repo,
+                'branch': user.branch,
+                'sync_enabled': user.sync,
+                'repository_count': len(user_repos),
+                'repositories': user_repos
+            }
+            
+            if user_repos:
+                summary['users_with_repos'] += 1
+                summary['total_repositories'] += len(user_repos)
+            
+            summary['users_summary'].append(user_info)
+        
+        return summary

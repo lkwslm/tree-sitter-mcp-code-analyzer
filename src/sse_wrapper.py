@@ -3,7 +3,8 @@ SSE包装器模块 - 用于拦截和解析POST请求的header字段
 """
 
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
+from pathlib import Path
 from mcp.server.sse import SseServerTransport
 
 from starlette.requests import Request
@@ -20,9 +21,9 @@ logger = logging.getLogger("sse-wrapper")
 class CustomSseWrapper(SseServerTransport):
     """自定义SSE传输类，继承SseServerTransport并添加header字段解析功能"""
     
-    def __init__(self, endpoint: str = "/messages/", storage_file: str = "user_headers.json"):
+    def __init__(self, endpoint: str = "/messages/", storage_file: str = "user_headers.json", workspace_root: str = "./workspace"):
         super().__init__(endpoint)
-        self.user_manager = UserManager(storage_file)
+        self.user_manager = UserManager(storage_file, workspace_root)
         # 保留原有的 headers 属性以保持向后兼容性
         self.headers = {}
 
@@ -65,8 +66,19 @@ class CustomSseWrapper(SseServerTransport):
         # 使用 UserManager 管理用户信息
         if user_id:
             try:
+                # 先添加或更新用户信息（不自动同步）
                 user_headers = self.user_manager.add_or_update_user(extract_headers)
                 logger.info(f"用户 {user_id} 的 headers 信息已更新")
+                
+                # 使用异步仓库同步操作，避免阻塞进程
+                # 异步逻辑会自动处理：
+                # 1. 仓库不存在时总是拉取
+                # 2. 仓库存在时根据sync参数和时间间隔决定是否更新
+                try:
+                    task_id = self.user_manager.sync_user_repository_async(user_id)
+                    logger.info(f"用户 {user_id} 的异步仓库同步已启动，任务ID: {task_id}")
+                except Exception as sync_error:
+                    logger.warning(f"用户 {user_id} 启动异步仓库同步失败: {sync_error}")
                 
                 # 保持向后兼容性，同时更新原有的 headers 字典
                 self.headers[user_id] = extract_headers
@@ -219,3 +231,90 @@ class CustomSseWrapper(SseServerTransport):
             bool: 导入成功返回 True，否则返回 False
         """
         return self.user_manager.import_users(import_file, merge)
+    
+    def sync_user_repository(self, username: str) -> Tuple[bool, str, Path]:
+        """
+        同步指定用户的 GitLab 仓库
+        
+        Args:
+            username: 用户名
+            
+        Returns:
+            Tuple[bool, str, Path]: (是否成功, 消息, 本地路径)
+        """
+        return self.user_manager.sync_user_repository(username)
+    
+    def sync_all_repositories(self) -> Dict[str, Tuple[bool, str, Path]]:
+        """
+        同步所有用户的 GitLab 仓库
+        
+        Returns:
+            Dict[str, Tuple[bool, str, Path]]: 每个用户的同步结果
+        """
+        return self.user_manager.sync_all_users_repositories()
+    
+    def get_user_repository_info(self, username: str) -> Dict[str, Any]:
+        """
+        获取用户仓库信息
+        
+        Args:
+            username: 用户名
+            
+        Returns:
+            Dict[str, Any]: 仓库信息
+        """
+        return self.user_manager.get_user_repository_info(username)
+    
+    def list_user_repositories(self, username: str) -> list:
+        """
+        列出用户的所有仓库
+        
+        Args:
+            username: 用户名
+            
+        Returns:
+            list: 仓库列表
+        """
+        return self.user_manager.list_user_repositories(username)
+    
+    def get_workspace_summary(self) -> Dict[str, Any]:
+        """
+        获取工作空间摘要信息
+        
+        Returns:
+            Dict[str, Any]: 工作空间摘要信息
+        """
+        return self.user_manager.get_workspace_summary()
+    
+    def get_sync_task_status(self, task_id: str):
+        """
+        获取异步同步任务状态
+        
+        Args:
+            task_id: 任务ID
+            
+        Returns:
+            任务状态信息
+        """
+        return self.user_manager.get_sync_task_status(task_id)
+    
+    def get_all_sync_tasks(self):
+        """
+        获取所有异步同步任务
+        
+        Returns:
+            所有任务状态信息
+        """
+        return self.user_manager.get_all_sync_tasks()
+    
+    def cancel_sync_task(self, task_id: str) -> bool:
+        """
+        取消异步同步任务
+        
+        Args:
+            task_id: 任务ID
+            
+        Returns:
+            bool: 是否成功取消
+        """
+        return self.user_manager.cancel_sync_task(task_id)
