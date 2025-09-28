@@ -15,6 +15,8 @@ from starlette.applications import Starlette
 from starlette.routing import Route, Mount
 from starlette.responses import Response
 
+from src.sse_wrapper import CustomSseWrapper
+
 # 添加src路径
 sys.path.append(str(Path(__file__).parent / 'src'))
 
@@ -132,7 +134,7 @@ class TreeSitterMCPServer:
                         "properties": {
                             "project_path": {
                                 "type": "string",
- "description": "要分析的项目路径"
+                                "description": "要分析的项目路径"
                             },
                             "language": {
                                 "type": "string", 
@@ -985,7 +987,8 @@ def main():
     
     if MCP_AVAILABLE:
         # 使用标准MCP协议 over SSE
-        sse = SseServerTransport("/messages/")
+        # sse = SseServerTransport("/messages/")
+        sse = CustomSseWrapper("/messages/")
         
         async def handle_sse(request):
             async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
@@ -1002,7 +1005,7 @@ def main():
         
         routes = [
             Route("/mcp", endpoint=handle_sse, methods=["GET"]),
-            Mount("/messages/", app=sse.handle_post_message),
+            Mount("/messages", app=sse.handle_post_message),
         ]
         
         app = Starlette(routes=routes)
