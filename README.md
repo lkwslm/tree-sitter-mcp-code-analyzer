@@ -63,9 +63,27 @@ pip install -r requirements.txt
         "your path/tree-sitter-mcp-code-analyzer/mcp_server.py"
       ]
     }
-}
-```
+  }
 
+    "tree-sitter-code-analyzers": {
+      "autoApprove": [
+      ],
+      "disabled": false,
+      "timeout": 60,
+      "type": "sse",
+      "url": "http://127.0.0.1:3000/mcp",
+      "headers": {
+        "username": "aaaa",
+        "git_token": "your-token",
+        "repo": "https://github.com/lkwslm/tree-sitter-mcp-code-analyzer.git",
+        "branch": "main",
+        "sync": "false",
+        "force_clean": "false"
+      }
+    }
+}
+
+```
 
 ### 命令行模式
 ```bash
@@ -81,21 +99,24 @@ python mcp_server.py
 
 #### HTTP API模式
 ```bash
-# 启动HTTP服务器
+# 启动HTTP服务器（兼容模式）
 python mcp_http_server.py
 # 或使用批处理脚本
 start_mcp_http_server.bat
 
+# 启动HTTP服务器（StreamableHTTP模式）
+python mcp_http_server.py --streamable
+
 # 访问地址
-# - 服务地址: http://127.0.0.1:8000
-# - API文档: http://127.0.0.1:8000/docs
+# - 服务地址: http://127.0.0.1:8002
+# - API文档: http://127.0.0.1:8002/docs
 # - Web客户端: 打开 web_client.html
 ```
 
 #### 快速分析API示例
 ```bash
 # 使用curl分析项目
-curl -X POST "http://127.0.0.1:8000/analyze" \
+curl -X POST "http://127.0.0.1:8002/analyze" \
      -H "Content-Type: application/json" \
      -d '{
        "project_path": "/path/to/project",
@@ -104,7 +125,7 @@ curl -X POST "http://127.0.0.1:8000/analyze" \
      }'
 
 # 获取类型信息
-curl -X POST "http://127.0.0.1:8000/mcp/call_tool" \
+curl -X POST "http://127.0.0.1:8002/mcp/call_tool" \
      -H "Content-Type: application/json" \
      -d '{
        "name": "get_type_info",
@@ -134,7 +155,7 @@ my-tree-sitter/
 │   ├── cache/          # 智能缓存系统
 │   └── config/         # 配置管理
 ├── examples/           # 示例代码
-├── tests/             # 测试文件
+├── tests/              # 测试文件
 ├── mcp_server.py      # MCP服务器（stdio）
 ├── mcp_http_server.py # HTTP服务器
 ├── web_client.html    # Web客户端界面
