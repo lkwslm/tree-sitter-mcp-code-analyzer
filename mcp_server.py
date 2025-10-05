@@ -97,9 +97,10 @@ from src.config.analyzer_config import AnalyzerConfig
 from src.knowledge.mcp_tools import MCPCodeTools
 from src.knowledge.summary_generator import LayeredSummaryGenerator
 from src.cache.analysis_cache import AnalysisCache
+from src.logging_setup import init_logging
 
-# 设置日志
-logging.basicConfig(level=logging.INFO)
+# 设置日志：集中化初始化，写入 logs/ 并输出到控制台
+init_logging(app_name="tree-sitter-mcp-server", config_path="config.yaml", default_log_dir="logs")
 logger = logging.getLogger("tree-sitter-mcp-server")
 
 class TreeSitterMCPServer:
