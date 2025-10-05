@@ -13,6 +13,9 @@ server = Server(name="remote-server", version="1.0.0")
 sse = SseServerTransport("/messages/")
 
 
+# 注册工具...
+# server.register_tool(...)
+
 async def handle_sse(request):
     async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
         # 运行 MCP server

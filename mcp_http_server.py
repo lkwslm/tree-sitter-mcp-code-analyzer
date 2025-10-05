@@ -97,6 +97,7 @@ from src.config.analyzer_config import AnalyzerConfig
 from src.knowledge.mcp_tools import MCPCodeTools
 from src.knowledge.summary_generator import LayeredSummaryGenerator
 from src.cache.analysis_cache import AnalysisCache
+from src.path_resolver import PathResolver
 
 # 设置日志
 logging.basicConfig(level=logging.INFO)
@@ -115,6 +116,9 @@ class TreeSitterMCPServer:
         
         # 初始化缓存管理器
         self.cache_manager = AnalysisCache()
+        
+        # 初始化路径解析器
+        self.path_resolver = PathResolver()
         
         # 注册工具
         self._register_tools()
@@ -264,6 +268,19 @@ class TreeSitterMCPServer:
                         "type": "object",
                         "properties": {}
                     }
+                ),
+                Tool(
+                    name="list_user_projects",
+                    description="列出指定用户的所有项目，返回项目的绝对路径",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "username": {
+                                "type": "string",
+                                "description": "用户名（可选，不提供则使用默认用户）"
+                            }
+                        }
+                    }
                 )
             ]
         
@@ -291,6 +308,8 @@ class TreeSitterMCPServer:
                     return await self._clear_cache(arguments)
                 elif name == "get_cache_stats":
                     return await self._get_cache_stats(arguments)
+                elif name == "list_user_projects":
+                    return await self._list_user_projects(arguments)
                 else:
                     return [TextContent(type="text", text=f"未知工具: {name}")]
             
@@ -971,6 +990,48 @@ class TreeSitterMCPServer:
         except Exception as e:
             return [TextContent(type="text", text=f"获取缓存统计失败: {str(e)}")]
 
+    async def _list_user_projects(self, args: Dict[str, Any]) -> Sequence[TextContent]:
+        """列出指定用户的所有项目，返回项目的绝对路径"""
+        try:
+            username = args.get('username')
+            
+            # 使用PathResolver获取用户项目列表
+            projects = self.path_resolver.list_user_projects(username)
+            
+            if not projects:
+                if username:
+                    return [TextContent(type="text", text=f"用户 '{username}' 没有找到任何项目")]
+                else:
+                    return [TextContent(type="text", text="没有找到任何项目")]
+            
+            # 构建响应，重点突出绝对路径
+            response = f"# 📁 用户项目列表\n\n"
+            
+            if username:
+                response += f"**用户**: {username}\n"
+            else:
+                response += f"**用户**: {self.path_resolver.default_username or '默认用户'}\n"
+            
+            response += f"**项目数量**: {len(projects)}\n\n"
+            response += "## 项目绝对路径列表\n\n"
+            
+            for i, project in enumerate(projects, 1):
+                project_name = project.get('name', 'Unknown')
+                project_path = project.get('path', 'Unknown')
+                is_git_repo = project.get('is_git_repo', False)
+                
+                git_indicator = " 🔗" if is_git_repo else ""
+                response += f"{i}. **{project_name}**{git_indicator}\n"
+                response += f"   📍 `{project_path}`\n\n"
+            
+            response += "\n💡 **提示**: 这些是项目的完整绝对路径，可以直接用于 `analyze_project` 工具"
+            
+            return [TextContent(type="text", text=response)]
+            
+        except Exception as e:
+            logger.error(f"列出用户项目失败: {e}")
+            return [TextContent(type="text", text=f"列出用户项目失败: {str(e)}")]
+
 def main():
     """MCP服务器主入口 (HTTP版本)"""
     # 设置控制台输出编码
@@ -982,6 +1043,10 @@ def main():
         sys.stdout.reconfigure(encoding='utf-8')
     if hasattr(sys.stderr, 'reconfigure'):
         sys.stderr.reconfigure(encoding='utf-8')
+    
+    # 从环境变量获取配置
+    host = os.getenv('MCP_SERVER_HOST', '0.0.0.0')
+    port = int(os.getenv('MCP_SERVER_PORT', '8000'))
     
     server_instance = TreeSitterMCPServer()
     
@@ -1003,18 +1068,26 @@ def main():
                 )
             return Response()  # 避免 NoneType 错误
         
+        async def health_check(request):
+            """健康检查端点"""
+            return Response(
+                content='{"status": "healthy", "service": "tree-sitter-mcp-analyzer"}',
+                media_type="application/json"
+            )
+        
         routes = [
             Route("/mcp", endpoint=handle_sse, methods=["GET"]),
+            Route("/health", endpoint=health_check, methods=["GET"]),
             Mount("/messages", app=sse.handle_post_message),
         ]
         
         app = Starlette(routes=routes)
         
         print("🚀 HTTP MCP服务器启动中...")
-        print("📍 访问端点: http://127.0.0.1:3000/mcp")
+        print(f"📍 访问端点: http://{host}:{port}/mcp")
         print("💡 使用MCP客户端连接进行工具调用")
         
-        uvicorn.run(app, host="127.0.0.1", port=3000)
+        uvicorn.run(app, host=host, port=port)
     else:
         # 简化实现模式
         print("🚀 Tree-Sitter代码分析器 (简化模式)")

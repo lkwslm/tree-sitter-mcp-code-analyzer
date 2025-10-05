@@ -14,6 +14,8 @@ ENV/
 *.virtualenv
 
 workspace/
+README/
+cache/
 
 # Python 缓存和编译文件
 __pycache__/
