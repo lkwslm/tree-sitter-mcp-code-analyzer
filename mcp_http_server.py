@@ -335,12 +335,12 @@ class TreeSitterMCPServer:
             file_extensions = language_extensions.get(language, ['cs'])
             
             # 检查缓存
-            logger.info(f"🔍 检查项目缓存: {project_path}")
+            logger.info(f" 检查项目缓存: {project_path}")
             has_changed = self.cache_manager.has_project_changed(project_path, language, file_extensions)
             
             if not has_changed:
                 # 使用缓存
-                logger.info("🚀 使用缓存数据")
+                logger.info(" 使用缓存数据")
                 cached_data = self.cache_manager.load_project_cache(project_path, language)
                 
                 if cached_data:
@@ -394,7 +394,7 @@ class TreeSitterMCPServer:
                     return [TextContent(type="text", text=response)]
             
             # 需要重新分析
-            logger.info("🔄 项目已改变，重新分析...")
+            logger.info(" 项目已改变，重新分析...")
             
             # 配置分析器
             config = AnalyzerConfig()
@@ -435,7 +435,7 @@ class TreeSitterMCPServer:
                 self.mcp_tools.set_detailed_index(self.detailed_index)
                 
                 # 保存到缓存
-                logger.info("💾 保存分析结果到缓存...")
+                logger.info(" 保存分析结果到缓存...")
                 self.cache_manager.save_project_cache(
                     project_path, language, file_extensions, 
                     self.kg_data, self.detailed_index
@@ -586,7 +586,7 @@ class TreeSitterMCPServer:
         
         result = self.mcp_tools.search_methods(keyword, limit)
         
-        response = f"# 🔍 搜索结果: '{keyword}'\n\n"
+        response = f"#  搜索结果: '{keyword}'\n\n"
         response += f"找到 {result['total_found']} 个相关方法\n\n"
         
         if result['methods']:
@@ -601,7 +601,7 @@ class TreeSitterMCPServer:
                     response += f"**上下文**: {method['context']}\n"
                 response += "\n"
         else:
-            response += "❌ 未找到匹配的方法"
+            response += " 未找到匹配的方法"
         
         return [TextContent(type="text", text=response)]
     
@@ -713,9 +713,9 @@ class TreeSitterMCPServer:
         result = self.mcp_tools.get_method_details(class_name, method_name)
         
         if 'error' in result:
-            return [TextContent(type="text", text=f"❌ {result['error']}")]
+            return [TextContent(type="text", text=f" {result['error']}")]
         
-        response = f"# 🔧 方法详情: {result['class']}.{result['method_name']}\n\n"
+        response = f"#  方法详情: {result['class']}.{result['method_name']}\n\n"
         
         response += f"**签名**: {result['signature']}\n"
         response += f"**返回类型**: {result['return_type']}\n"
@@ -750,11 +750,11 @@ class TreeSitterMCPServer:
                     'is_static': '静态方法',
                     'is_public': '公共方法'
                 }
-                response += f"✅ {key_map.get(key, key)}\n"
+                response += f" {key_map.get(key, key)}\n"
         
         suggestions = result.get('usage_suggestions', [])
         if suggestions:
-            response += "\n## 💡 使用建议\n\n"
+            response += f"\n##  使用建议\n\n"
             for suggestion in suggestions:
                 response += f"- {suggestion}\n"
         
@@ -768,7 +768,7 @@ class TreeSitterMCPServer:
         result = self.mcp_tools.get_architecture_info()
         
         if 'error' in result:
-            return [TextContent(type="text", text=f"❌ {result['error']}")]
+            return [TextContent(type="text", text=f" {result['error']}")]
         
         response = "系统架构分析\n\n"
         
@@ -981,9 +981,9 @@ class TreeSitterMCPServer:
                 for i, project_key in enumerate(projects, 1):
                     response += f"{i}. {project_key}\n"
             else:
-                response += "ℹ️ 暂无缓存项目"
+                response += " 暂无缓存项目"
             
-            response += "\n\n💡 **提示**: 使用 `clear_cache` 工具可以清除缓存"
+            response += "\n\n **提示**: 使用 `clear_cache` 工具可以清除缓存"
             
             return [TextContent(type="text", text=response)]
             
@@ -1020,11 +1020,11 @@ class TreeSitterMCPServer:
                 project_path = project.get('path', 'Unknown')
                 is_git_repo = project.get('is_git_repo', False)
                 
-                git_indicator = " 🔗" if is_git_repo else ""
+                git_indicator = " " if is_git_repo else ""
                 response += f"{i}. **{project_name}**{git_indicator}\n"
-                response += f"   📍 `{project_path}`\n\n"
+                response += f"    `{project_path}`\n\n"
             
-            response += "\n💡 **提示**: 这些是项目的完整绝对路径，可以直接用于 `analyze_project` 工具"
+            response += "\n **提示**: 这些是项目的完整绝对路径，可以直接用于 `analyze_project` 工具"
             
             return [TextContent(type="text", text=response)]
             
@@ -1096,7 +1096,7 @@ def main():
         
         # 在简化模式下，可以提供一个基本的命令行接口用于测试
         async def simple_demo():
-            print("\n🔍 运行简单演示...")
+            print("\n 运行简单演示...")
             try:
                 # 演示分析示例项目
                 result = await server_instance._analyze_project({
@@ -1105,12 +1105,12 @@ def main():
                 })
                 
                 if result and len(result) > 0:
-                    print("✅ 演示分析成功!")
+                    print(" 演示分析成功!")
                     print(result[0].text[:300] + "..." if len(result[0].text) > 300 else result[0].text)
                 else:
-                    print("❌ 演示分析失败")
+                    print(" 演示分析失败")
             except Exception as e:
-                print(f"❌ 演示出错: {e}")
+                print(f" 演示出错: {e}")
         
         asyncio.run(simple_demo())
 
