@@ -204,3 +204,4 @@ release/
 !mcp_server.py
 !mcp_http_server.py
 !src.cache/
+!config/

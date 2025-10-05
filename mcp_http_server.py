@@ -101,7 +101,7 @@ from src.path_resolver import PathResolver
 from src.logging_setup import init_logging
 
 # 设置日志：集中化初始化，写入 logs/ 并输出到控制台
-init_logging(app_name="tree-sitter-mcp-server", config_path="config.yaml", default_log_dir="logs")
+init_logging(app_name="tree-sitter-mcp-server", config_path="config/config.yaml", default_log_dir="logs")
 logger = logging.getLogger("tree-sitter-mcp-server")
 
 class TreeSitterMCPServer:

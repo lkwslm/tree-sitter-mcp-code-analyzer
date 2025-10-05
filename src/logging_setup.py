@@ -29,14 +29,14 @@ def _resolve_config(config_path: str) -> dict:
 
 def init_logging(
     app_name: str = "tree-sitter-mcp-server",
-    config_path: str = "config.yaml",
+    config_path: str = "config/config.yaml",
     default_log_dir: str = "logs",
     default_level: str = "INFO",
 ) -> None:
     """
     初始化全局日志系统：控制台 + 按天滚动文件。
 
-    - 优先使用 `config.yaml` 中的 logging 配置
+    - 优先使用 `config/config.yaml` 中的 logging 配置
     - 如果未指定文件，则默认写入 `logs/<app_name>.log`
     - 自动创建日志目录
     """

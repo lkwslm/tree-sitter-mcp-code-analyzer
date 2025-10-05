@@ -48,11 +48,35 @@ class PathResolver:
                 
                 logger.info(f"加载配置成功: workspace_root={self.workspace_root}, default_username={self.default_username}")
             else:
-                logger.warning(f"配置文件不存在: {self.config_file}，使用默认配置")
+                # 配置文件缺失时，基于备用信息自动创建默认配置并应用
                 self._load_fallback_config()
+                self.config = {
+                    "workspace_root": "./workspace",
+                    "default_username": self.default_username,
+                    "search_strategies": {},
+                    "auto_detection": {},
+                    "path_patterns": {}
+                }
+                try:
+                    self.config_file.parent.mkdir(parents=True, exist_ok=True)
+                    with open(self.config_file, 'w', encoding='utf-8') as f:
+                        json.dump(self.config, f, indent=2, ensure_ascii=False)
+
+                    # 应用配置到实例
+                    self.workspace_root = Path(self.config.get('workspace_root', './workspace'))
+                    self.default_username = self.config.get('default_username')
+                    self.search_strategies = self.config.get('search_strategies', {})
+                    self.auto_detection = self.config.get('auto_detection', {})
+                    self.path_patterns = self.config.get('path_patterns', {})
+
+                    logger.info(f"配置文件不存在: {self.config_file}，已创建默认配置")
+                except Exception as e:
+                    logger.info(f"配置文件不存在且创建失败: {e}，使用内存默认配置")
+                    # 仍然应用内存中的默认配置以保证可用
+                    self.workspace_root = Path(self.config.get('workspace_root', './workspace'))
                 
         except Exception as e:
-            logger.warning(f"加载配置失败: {e}，使用默认配置")
+            logger.info(f"加载配置失败: {e}，使用默认配置")
             self._load_fallback_config()
     
     def _load_fallback_config(self):
